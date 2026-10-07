@@ -221,11 +221,12 @@ impl WslRemoteConnection {
             .await
             .is_ok();
 
-        #[cfg(any(debug_assertions, feature = "build-remote-server-binary"))]
-        if let Some(remote_server_path) = super::build_remote_server_from_source(
+        if let Some(remote_server_path) = super::prepare_local_remote_server(
             &self.platform,
             delegate.as_ref(),
             binary_exists_on_server,
+            release_channel,
+            version.clone(),
             cx,
         )
         .await?

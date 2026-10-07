@@ -15229,6 +15229,7 @@ dependencies = [
  "serde",
  "serde_json",
  "settings_content",
+ "sha2",
  "smol",
  "telemetry",
  "tempfile",

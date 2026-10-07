@@ -2,7 +2,7 @@ name: PDF viewer fork checks
 
 on:
   push:
-    branches: [feature/pdf-viewer, main]
+    branches: [feature/pdf-viewer, feature/pdf-remote-packaging, main]
   pull_request:
     branches: [main]
   workflow_dispatch:
@@ -36,8 +36,9 @@ jobs:
             ~/.cargo/git
             target
           key: pdf-viewer-${{ runner.os }}-rust-1.98.1-${{ hashFiles('Cargo.lock') }}
+          restore-keys: pdf-viewer-${{ runner.os }}-rust-1.98.1-
       - name: Check Rust formatting
-        run: cargo fmt -p pdf_renderer -p pdf_viewer -p zed -- --check
+        run: cargo fmt -p pdf_renderer -p pdf_viewer -p zed -p remote -p remote_server -- --check
       - name: Test the renderer and worker protocol
         run: cargo test --locked -p pdf_renderer
       - name: Build the renderer worker probe
@@ -59,6 +60,55 @@ jobs:
             ~/.cargo/git
             target
           key: pdf-viewer-${{ runner.os }}-rust-1.98.1-${{ hashFiles('Cargo.lock') }}
+  remote-server:
+    if: github.repository == 'dimasma0305/zed'
+    runs-on: ubuntu-24.04
+    timeout-minutes: 120
+    env:
+      CC: clang
+      CXX: clang++
+      ZED_RELEASE_CHANNEL: stable
+      RELEASE_CHANNEL: stable
+    steps:
+      - uses: actions/checkout@93cb6efe18208431cddfb8368fd83d5badbf9bfd
+      - name: Install the upstream Rust toolchain on the disposable runner
+        run: rustup toolchain install 1.98.1 --profile minimal
+      - uses: actions/cache/restore@0057852bfaa89a56745cba8c7296529d2fc39830
+        with:
+          path: |
+            ~/.cargo/registry
+            ~/.cargo/git
+            target
+          key: pdf-remote-linux-x86_64-rust-1.98.1-${{ hashFiles('Cargo.lock') }}
+          restore-keys: |
+            pdf-remote-linux-x86_64-rust-1.98.1-
+            pdf-viewer-Linux-rust-1.98.1-
+      - name: Set up upstream Linux build dependencies on the disposable runner
+        run: ./script/linux
+      - name: Test remote bundle source, version, protocol and platform selection
+        run: cargo test --locked -p remote --features bundled-remote-server transport::bundled_server::tests
+      - name: Build the matching Linux server with production assertions
+        run: cargo --config 'profile.release-fast.debug="limited"' --config 'profile.release-fast.strip="debuginfo"' build --locked --profile release-fast -p remote_server --features remote_server/debug-embed
+      - name: Validate runtime dependencies and exact server identity
+        run: |
+          ldd target/release-fast/remote_server | tee remote-server-dependencies.txt
+          ! grep -q 'not found' remote-server-dependencies.txt
+          python3 script/package-pdf-remote-server.py target/release-fast/remote_server pdf-remote-server --commit "$GITHUB_SHA"
+          cp remote-server-dependencies.txt pdf-remote-server/
+      - uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a
+        with:
+          name: pdf-zed-linux-remote-server
+          path: pdf-remote-server
+          retention-days: 7
+          if-no-files-found: error
+      - uses: actions/cache/save@0057852bfaa89a56745cba8c7296529d2fc39830
+        if: always()
+        with:
+          path: |
+            ~/.cargo/registry
+            ~/.cargo/git
+            target
+          key: pdf-remote-linux-x86_64-rust-1.98.1-${{ hashFiles('Cargo.lock') }}
   windows:
     if: github.repository == 'dimasma0305/zed'
     runs-on: windows-2022
@@ -75,6 +125,7 @@ jobs:
             ~/.cargo/git
             target
           key: pdf-viewer-${{ runner.os }}-rust-1.98.1-${{ hashFiles('Cargo.lock') }}
+          restore-keys: pdf-viewer-${{ runner.os }}-rust-1.98.1-
       - name: Check PDF viewer integration
         run: cargo check --locked -p pdf_viewer
       - name: Run PDF viewer GPUI tests
@@ -88,7 +139,7 @@ jobs:
           ZED_RELEASE_CHANNEL: stable
           RELEASE_CHANNEL: stable
           ZED_UPDATE_EXPLANATION: Download updates for this PDF viewer fork from https://github.com/dimasma0305/zed/releases. Upstream automatic updates are disabled for this build.
-        run: cargo --config 'profile.dev.package.gpui_windows.debug-assertions=false' --config 'profile.dev.package.zed.debug-assertions=false' build --locked -p zed -p cli --bin zed --bin cli --features util/debug-embed
+        run: cargo --config 'profile.dev.package.gpui_windows.debug-assertions=false' --config 'profile.dev.package.zed.debug-assertions=false' --config 'profile.dev.package.remote.debug-assertions=false' build --locked -p zed -p cli --bin zed --bin cli --features util/debug-embed,remote/bundled-remote-server
       - name: Check the PDF helper inside the Windows application
         run: python crates/pdf_renderer/tests/check_worker.py target/debug/zed.exe pdf-windows-qa
       - uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a

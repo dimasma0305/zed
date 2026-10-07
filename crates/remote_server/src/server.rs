@@ -80,6 +80,8 @@ pub enum Commands {
         identifier: String,
     },
     Version,
+    /// Prints the source and protocol identity for release-package validation.
+    BuildInfo,
 }
 
 pub fn run(command: Commands) -> anyhow::Result<()> {
@@ -87,6 +89,19 @@ pub fn run(command: Commands) -> anyhow::Result<()> {
     use release_channel::{RELEASE_CHANNEL, ReleaseChannel};
 
     match command {
+        Commands::BuildInfo => {
+            println!(
+                "{}",
+                serde_json::json!({
+                    "package_version": env!("ZED_PKG_VERSION"),
+                    "source_commit": option_env!("ZED_COMMIT_SHA"),
+                    "release_channel": RELEASE_CHANNEL.dev_name(),
+                    "protocol_version": rpc::PROTOCOL_VERSION,
+                    "target": env!("TARGET"),
+                })
+            );
+            Ok(())
+        }
         Commands::Run {
             log_file,
             pid_file,

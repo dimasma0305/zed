@@ -86,9 +86,9 @@ or runtime installation is required. The `pdf-viewer.yml` workflow checks this
 fork on GitHub-hosted Linux and Windows runners. The upstream Zed workflows
 restrict their build jobs to upstream repository owners.
 
-When the Windows checks succeed, the workflow produces a
-`pdf-zed-windows-development` artifact. Extract all its files into one folder
-and run `zed.exe`. This is an unsigned development build with fonts, keymaps,
+Download the complete Windows package from this fork's GitHub Releases page.
+Extract every file, including the `remote-servers` folder, and run `zed.exe`.
+This is an unsigned development build with fonts, keymaps,
 and other assets embedded using Zed's `util/debug-embed` feature. The Windows
 renderer uses Zed's release shader compilation path through a package-specific
 Cargo profile override, so it does not need the build machine's source files.
@@ -104,8 +104,21 @@ the dependency license notices with `script/generate-licenses.ps1`, then run:
 $env:ZED_RELEASE_CHANNEL = "stable"
 $env:RELEASE_CHANNEL = "stable"
 $env:ZED_UPDATE_EXPLANATION = "Download updates from https://github.com/dimasma0305/zed/releases."
-cargo --config 'profile.dev.package.gpui_windows.debug-assertions=false' --config 'profile.dev.package.zed.debug-assertions=false' build --locked -p zed -p cli --bin zed --bin cli --features util/debug-embed
+cargo --config 'profile.dev.package.gpui_windows.debug-assertions=false' --config 'profile.dev.package.zed.debug-assertions=false' --config 'profile.dev.package.remote.debug-assertions=false' build --locked -p zed -p cli --bin zed --bin cli --features util/debug-embed,remote/bundled-remote-server
 ```
+
+The workflow builds a Linux x86_64 remote server from the same source commit.
+For a local package, place the `pdf-zed-linux-remote-server` artifact's contents
+in `remote-servers` beside the Windows executable. The client checks the source
+commit, package version, release channel, RPC protocol, platform, and archive
+checksum before using it. A missing or mismatched bundle produces an error
+instead of compiling a server or downloading one from upstream.
+
+This package supports remote Linux x86_64 hosts with Ubuntu 24.04-compatible
+runtime libraries. Other remote architectures and operating systems need a
+matching server built and packaged for that platform. The Windows and Linux
+artifacts must come from the same workflow run; the Windows artifact alone is
+incomplete for remote development. Zig is not required on the user's PC.
 
 The Windows package uses Zed's stable settings and workspace database. Upstream
 automatic updates are disabled through the build's `ZED_UPDATE_EXPLANATION`

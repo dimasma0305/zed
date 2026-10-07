@@ -14,6 +14,7 @@ use gpui::{AppContext as _, AsyncApp, Task};
 use rpc::proto::Envelope;
 use util::command::Child;
 
+mod bundled_server;
 pub mod docker;
 #[cfg(any(test, feature = "test-support"))]
 pub mod mock;
@@ -236,6 +237,42 @@ fn handle_rpc_messages_over_child_process_stdio(
             Err(error) => Err(error),
         }
     })
+}
+
+async fn prepare_local_remote_server(
+    platform: &crate::RemotePlatform,
+    delegate: &dyn crate::RemoteClientDelegate,
+    binary_exists_on_server: bool,
+    channel: release_channel::ReleaseChannel,
+    version: semver::Version,
+    cx: &mut AsyncApp,
+) -> Result<Option<std::path::PathBuf>> {
+    if cfg!(feature = "bundled-remote-server") {
+        let commit = cx
+            .update(|cx| release_channel::AppCommitSha::try_global(cx))
+            .context("Client source commit is unavailable for remote server selection")?
+            .full();
+        let executable = std::env::current_exe()?;
+        let directory = executable
+            .parent()
+            .context("Client executable directory is unavailable")?
+            .to_path_buf();
+        let platform = *platform;
+        let archive = cx
+            .background_spawn(async move {
+                bundled_server::select_archive(&directory, platform, channel, version, &commit)
+            })
+            .await?;
+        if binary_exists_on_server {
+            return Ok(None);
+        }
+        delegate.set_status(Some("Using the matching bundled remote server"), cx);
+        return Ok(Some(archive));
+    }
+    #[cfg(any(debug_assertions, feature = "build-remote-server-binary"))]
+    return build_remote_server_from_source(platform, delegate, binary_exists_on_server, cx).await;
+    #[cfg(not(any(debug_assertions, feature = "build-remote-server-binary")))]
+    Ok(None)
 }
 
 #[cfg(any(debug_assertions, feature = "build-remote-server-binary"))]

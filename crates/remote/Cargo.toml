@@ -16,6 +16,7 @@ doctest = false
 [features]
 default = []
 build-remote-server-binary = []
+bundled-remote-server = []
 test-support = ["fs/test-support"]
 
 [dependencies]
@@ -36,6 +37,7 @@ schemars.workspace = true
 semver.workspace = true
 serde.workspace = true
 serde_json.workspace = true
+sha2.workspace = true
 settings_content.workspace = true
 smol.workspace = true
 telemetry.workspace = true
