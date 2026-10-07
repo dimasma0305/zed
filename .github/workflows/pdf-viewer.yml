@@ -16,7 +16,7 @@ concurrency:
 
 env:
   RUSTUP_TOOLCHAIN: 1.98.1
-  CARGO_INCREMENTAL: '0'
+  CARGO_INCREMENTAL: "0"
   CARGO_TERM_COLOR: always
 
 jobs:
@@ -39,6 +39,15 @@ jobs:
         run: cargo fmt -p pdf_renderer -p pdf_viewer -p zed -- --check
       - name: Test the renderer and worker protocol
         run: cargo test --locked -p pdf_renderer
+      - name: Build the renderer worker probe
+        run: cargo build --locked -p pdf_renderer --example worker
+      - name: Check the real worker process and save rendered pages
+        run: python3 crates/pdf_renderer/tests/check_worker.py target/debug/examples/worker pdf-renderer-qa
+      - uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a
+        with:
+          name: pdf-renderer-qa
+          path: pdf-renderer-qa
+          retention-days: 7
       - name: Lint the renderer using the repository wrapper
         run: ./script/clippy -p pdf_renderer --locked
   windows:

@@ -16,13 +16,13 @@ Use the arrows above the page to move between pages. Click the page number,
 enter a number from 1 to the page count, and press `Enter`. Press `Escape` to
 cancel. You can also use these commands while the PDF tab has focus:
 
-| Command | Keybinding |
-| --- | --- |
+| Command                            | Keybinding                     |
+| ---------------------------------- | ------------------------------ |
 | {#action pdf_viewer::PreviousPage} | {#kb pdf_viewer::PreviousPage} |
-| {#action pdf_viewer::NextPage} | {#kb pdf_viewer::NextPage} |
-| {#action pdf_viewer::FirstPage} | {#kb pdf_viewer::FirstPage} |
-| {#action pdf_viewer::LastPage} | {#kb pdf_viewer::LastPage} |
-| {#action pdf_viewer::GoToPage} | {#kb pdf_viewer::GoToPage} |
+| {#action pdf_viewer::NextPage}     | {#kb pdf_viewer::NextPage}     |
+| {#action pdf_viewer::FirstPage}    | {#kb pdf_viewer::FirstPage}    |
+| {#action pdf_viewer::LastPage}     | {#kb pdf_viewer::LastPage}     |
+| {#action pdf_viewer::GoToPage}     | {#kb pdf_viewer::GoToPage}     |
 
 ## Zoom and reload
 
@@ -31,13 +31,13 @@ return to 100%. **Fit Page** fits the current page in the available space and
 adjusts when you resize the pane. At larger zoom levels, use the scrollbars,
 mouse wheel, or trackpad to move around the page.
 
-| Command | Keybinding |
-| --- | --- |
-| {#action pdf_viewer::ZoomIn} | {#kb pdf_viewer::ZoomIn} |
-| {#action pdf_viewer::ZoomOut} | {#kb pdf_viewer::ZoomOut} |
+| Command                         | Keybinding                  |
+| ------------------------------- | --------------------------- |
+| {#action pdf_viewer::ZoomIn}    | {#kb pdf_viewer::ZoomIn}    |
+| {#action pdf_viewer::ZoomOut}   | {#kb pdf_viewer::ZoomOut}   |
 | {#action pdf_viewer::ResetZoom} | {#kb pdf_viewer::ResetZoom} |
 | {#action pdf_viewer::FitToPage} | {#kb pdf_viewer::FitToPage} |
-| {#action pdf_viewer::Reload} | {#kb pdf_viewer::Reload} |
+| {#action pdf_viewer::Reload}    | {#kb pdf_viewer::Reload}    |
 
 Changes on disk reload the PDF. The tab follows file renames in the project.
 You can also click **Reload** to retry after a loading or rendering error.

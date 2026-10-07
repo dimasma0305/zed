@@ -325,6 +325,7 @@ impl PdfView {
                             if pending_page != this.page_index {
                                 this.page_index = pending_page;
                                 this.request_render(window, cx);
+                                cx.emit(PdfViewEvent::Navigated);
                                 return;
                             }
                         }
@@ -557,6 +558,10 @@ impl Render for PdfView {
         };
         let zoom_label = format!("{:.0}%", self.effective_zoom() * 100.0);
         let this = cx.entity().downgrade();
+        let zoom = self.effective_zoom();
+        let page = self.page_size.unwrap_or_default();
+        let content_width = (page.width * zoom + px(32.0)).max(self.viewport_size.width);
+        let content_height = (page.height * zoom + px(32.0)).max(self.viewport_size.height);
         let content = div()
             .id("pdf-page-scroll")
             .size_full()
@@ -565,14 +570,12 @@ impl Render for PdfView {
             .child(
                 div()
                     .p_4()
-                    .min_w_full()
-                    .min_h_full()
+                    .w(content_width)
+                    .h(content_height)
                     .flex()
                     .justify_center()
                     .items_start()
                     .when_some(self.image.clone(), |element, image| {
-                        let page = self.page_size.unwrap_or_default();
-                        let zoom = self.effective_zoom();
                         element.child(
                             img(image)
                                 .w(page.width * zoom)
@@ -846,7 +849,7 @@ impl SerializableItem for PdfView {
     ) -> Option<Task<Result<()>>> {
         let workspace_id = workspace.database_id()?;
         let path = self.absolute_path(cx)?;
-        let page_index = self.page_index as i64;
+        let page_index = self.pending_page.unwrap_or(self.page_index) as i64;
         let database = persistence::PdfViewerDb::global(cx);
         Some(cx.background_spawn(async move {
             database
