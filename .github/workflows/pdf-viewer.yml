@@ -28,13 +28,13 @@ jobs:
       - uses: actions/checkout@93cb6efe18208431cddfb8368fd83d5badbf9bfd
       - name: Install the upstream Rust toolchain on the disposable runner
         run: rustup toolchain install 1.98.1 --profile minimal --component rustfmt --component clippy
-      - name: Resolve new workspace dependencies while preserving locked versions
-        run: cargo update --workspace
-      - uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a
+      - uses: actions/cache@0057852bfaa89a56745cba8c7296529d2fc39830
         with:
-          name: pdf-viewer-lockfile
-          path: Cargo.lock
-          retention-days: 7
+          path: |
+            ~/.cargo/registry
+            ~/.cargo/git
+            target
+          key: pdf-viewer-${{ runner.os }}-rust-1.98.1-${{ hashFiles('Cargo.lock') }}
       - name: Check Rust formatting
         run: cargo fmt -p pdf_renderer -p pdf_viewer -p zed -- --check
       - name: Test the renderer and worker protocol
@@ -43,17 +43,19 @@ jobs:
         run: ./script/clippy -p pdf_renderer --locked
   windows:
     if: github.repository == 'dimasma0305/zed'
-    needs: renderer
     runs-on: windows-2022
     timeout-minutes: 90
     steps:
       - uses: actions/checkout@93cb6efe18208431cddfb8368fd83d5badbf9bfd
       - name: Install the upstream Rust toolchain on the disposable runner
         run: rustup toolchain install 1.98.1 --profile minimal
-      - uses: actions/download-artifact@3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c
+      - uses: actions/cache@0057852bfaa89a56745cba8c7296529d2fc39830
         with:
-          name: pdf-viewer-lockfile
-          path: .
+          path: |
+            ~/.cargo/registry
+            ~/.cargo/git
+            target
+          key: pdf-viewer-${{ runner.os }}-rust-1.98.1-${{ hashFiles('Cargo.lock') }}
       - name: Check PDF viewer integration
         run: cargo check --locked -p pdf_viewer
       - name: Run PDF viewer GPUI tests

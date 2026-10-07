@@ -24,28 +24,31 @@ use workspace::{
     item::{Item, ItemBufferKind, ItemEvent, ProjectItem, SerializableItem},
 };
 
-actions!(pdf_viewer, [
-    /// Show the next PDF page.
-    NextPage,
-    /// Show the previous PDF page.
-    PreviousPage,
-    /// Show the first PDF page.
-    FirstPage,
-    /// Show the last PDF page.
-    LastPage,
-    /// Enter a PDF page number.
-    GoToPage,
-    /// Zoom in the PDF page.
-    ZoomIn,
-    /// Zoom out the PDF page.
-    ZoomOut,
-    /// Show the PDF page at 100%.
-    ResetZoom,
-    /// Fit the PDF page in the window.
-    FitToPage,
-    /// Reload the PDF from disk.
-    Reload,
-]);
+actions!(
+    pdf_viewer,
+    [
+        /// Show the next PDF page.
+        NextPage,
+        /// Show the previous PDF page.
+        PreviousPage,
+        /// Show the first PDF page.
+        FirstPage,
+        /// Show the last PDF page.
+        LastPage,
+        /// Enter a PDF page number.
+        GoToPage,
+        /// Zoom in the PDF page.
+        ZoomIn,
+        /// Zoom out the PDF page.
+        ZoomOut,
+        /// Show the PDF page at 100%.
+        ResetZoom,
+        /// Fit the PDF page in the window.
+        FitToPage,
+        /// Reload the PDF from disk.
+        Reload,
+    ]
+);
 
 const MIN_ZOOM: f32 = 0.1;
 const MAX_ZOOM: f32 = 8.0;

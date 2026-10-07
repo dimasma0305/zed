@@ -15,4 +15,3 @@ doctest = false
 [dependencies]
 anyhow.workspace = true
 hayro = "=0.8.0"
-
