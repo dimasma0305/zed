@@ -7,8 +7,9 @@ use futures::future;
 #[cfg(not(any(test, feature = "test-support")))]
 use futures::io::{AsyncReadExt as _, AsyncWriteExt as _};
 use gpui::{
-    Entity, EventEmitter, FocusHandle, Focusable, Render, RenderImage, ScrollHandle, Size, Task,
-    WeakEntity, actions, canvas, img, point, size,
+    Bounds, CursorStyle, Entity, EventEmitter, FocusHandle, Focusable, MouseButton, MouseDownEvent,
+    MouseMoveEvent, MouseUpEvent, PinchEvent, Point, Render, RenderImage, ScrollDelta,
+    ScrollHandle, ScrollWheelEvent, Size, Task, WeakEntity, actions, canvas, img, point, size,
 };
 use pdf_renderer::{MAX_FILE_BYTES, RenderedPage};
 #[cfg(not(any(test, feature = "test-support")))]
@@ -52,6 +53,10 @@ actions!(
 
 const MIN_ZOOM: f32 = 0.1;
 const MAX_ZOOM: f32 = 8.0;
+const ZOOM_STEP: f32 = 1.1;
+const SCROLL_LINE_MULTIPLIER: f32 = 20.0;
+const ZOOM_RENDER_DELAY: Duration = Duration::from_millis(100);
+const PAGE_PADDING: f32 = 16.0;
 const RENDER_TIMEOUT: Duration = Duration::from_secs(30);
 const FILE_LOAD_TIMEOUT: Duration = Duration::from_secs(120);
 
@@ -171,15 +176,20 @@ pub struct PdfView {
     fit_to_page: bool,
     page_size: Option<Size<Pixels>>,
     viewport_size: Size<Pixels>,
+    viewport_bounds: Option<Bounds<Pixels>>,
     image: Option<Arc<RenderImage>>,
     scroll_handle: ScrollHandle,
     loading: bool,
     error: Option<SharedString>,
     page_editor: Option<Entity<Editor>>,
     page_input_error: Option<SharedString>,
+    zoom_editor: Option<Entity<Editor>>,
+    zoom_input_error: Option<SharedString>,
+    last_mouse_position: Option<Point<Pixels>>,
     generation: u64,
     render_task: Option<Task<()>>,
     load_task: Option<Task<()>>,
+    zoom_task: Option<Task<()>>,
 }
 
 impl PdfView {
@@ -217,6 +227,8 @@ impl PdfView {
                 this.generation += 1;
                 this.load_task = None;
                 this.render_task = None;
+                this.zoom_task = None;
+                this.last_mouse_position = None;
                 this.bytes = None;
                 this.clear_image(window);
                 this.loading = false;
@@ -244,15 +256,20 @@ impl PdfView {
             fit_to_page: true,
             page_size: None,
             viewport_size: size(px(800.0), px(600.0)),
+            viewport_bounds: None,
             image: None,
             scroll_handle: ScrollHandle::new(),
             loading: false,
             error: None,
             page_editor: None,
             page_input_error: None,
+            zoom_editor: None,
+            zoom_input_error: None,
+            last_mouse_position: None,
             generation: 0,
             render_task: None,
             load_task: None,
+            zoom_task: None,
         };
         view.load_document(window, cx);
         view
@@ -269,6 +286,8 @@ impl PdfView {
         let generation = self.generation;
         self.load_task = None;
         self.render_task = None;
+        self.zoom_task = None;
+        self.last_mouse_position = None;
         self.bytes = None;
         self.loading = true;
         self.error = None;
@@ -357,8 +376,8 @@ impl PdfView {
         if self.fit_to_page {
             self.page_size
                 .map(|page| {
-                    ((self.viewport_size.width - px(32.0)) / page.width)
-                        .min((self.viewport_size.height - px(32.0)) / page.height)
+                    ((self.viewport_size.width - px(PAGE_PADDING * 2.0)) / page.width)
+                        .min((self.viewport_size.height - px(PAGE_PADDING * 2.0)) / page.height)
                         .clamp(MIN_ZOOM, MAX_ZOOM)
                 })
                 .unwrap_or(1.0)
@@ -368,6 +387,7 @@ impl PdfView {
     }
 
     fn request_render(&mut self, window: &mut Window, cx: &mut Context<Self>) {
+        self.zoom_task = None;
         let Some(bytes) = self.bytes.clone() else {
             return;
         };
@@ -457,6 +477,7 @@ impl PdfView {
             return;
         }
         self.page_index = page_index;
+        self.last_mouse_position = None;
         self.page_size = None;
         self.scroll_handle.set_offset(point(px(0.0), px(0.0)));
         self.clear_image(window);
@@ -488,11 +509,30 @@ impl PdfView {
         });
         editor.focus_handle(cx).focus(window, cx);
         self.page_editor = Some(editor);
+        self.zoom_editor = None;
+        self.zoom_input_error = None;
         self.page_input_error = None;
         cx.notify();
     }
 
     fn confirm_page(&mut self, _: &menu::Confirm, window: &mut Window, cx: &mut Context<Self>) {
+        if let Some(editor) = self.zoom_editor.as_ref() {
+            let percentage = editor.read(cx).text(cx);
+            match percentage.trim().trim_end_matches('%').parse::<f32>() {
+                Ok(percentage)
+                    if percentage.is_finite()
+                        && (MIN_ZOOM * 100.0..=MAX_ZOOM * 100.0).contains(&percentage) =>
+                {
+                    self.zoom_editor = None;
+                    self.zoom_input_error = None;
+                    self.focus_handle.focus(window, cx);
+                    self.set_zoom(percentage / 100.0, window, cx);
+                }
+                _ => self.zoom_input_error = Some("Enter a zoom from 10% to 800%".into()),
+            }
+            cx.notify();
+            return;
+        }
         let Some(editor) = self.page_editor.as_ref() else {
             cx.propagate();
             return;
@@ -513,6 +553,12 @@ impl PdfView {
     }
 
     fn cancel_page(&mut self, _: &menu::Cancel, window: &mut Window, cx: &mut Context<Self>) {
+        if self.zoom_editor.take().is_some() {
+            self.zoom_input_error = None;
+            self.focus_handle.focus(window, cx);
+            cx.notify();
+            return;
+        }
         if self.page_editor.take().is_none() {
             cx.propagate();
             return;
@@ -523,18 +569,186 @@ impl PdfView {
     }
 
     fn set_zoom(&mut self, zoom: f32, window: &mut Window, cx: &mut Context<Self>) {
-        self.zoom = zoom.clamp(MIN_ZOOM, MAX_ZOOM);
-        self.fit_to_page = false;
+        if !self.update_zoom(zoom, None) {
+            return;
+        }
         self.request_render(window, cx);
     }
+
+    fn page_origin(&self, zoom: f32) -> Point<Pixels> {
+        let width = self.page_size.unwrap_or_default().width * zoom;
+        point(
+            ((width + px(PAGE_PADDING * 2.0)).max(self.viewport_size.width) - width) / 2.0,
+            px(PAGE_PADDING),
+        )
+    }
+
+    fn clamp_scroll_offset(&self, offset: Point<Pixels>) -> Point<Pixels> {
+        let page = self.page_size.unwrap_or_default();
+        let zoom = self.effective_zoom();
+        let maximum = point(
+            (page.width * zoom + px(PAGE_PADDING * 2.0) - self.viewport_size.width).max(px(0.0)),
+            (page.height * zoom + px(PAGE_PADDING * 2.0) - self.viewport_size.height).max(px(0.0)),
+        );
+        point(
+            offset.x.clamp(-maximum.x, px(0.0)),
+            offset.y.clamp(-maximum.y, px(0.0)),
+        )
+    }
+
+    fn update_zoom(&mut self, zoom: f32, center: Option<Point<Pixels>>) -> bool {
+        if !zoom.is_finite() || zoom <= 0.0 {
+            return false;
+        }
+        let previous_zoom = self.effective_zoom();
+        let zoom = zoom.clamp(MIN_ZOOM, MAX_ZOOM);
+        if zoom == previous_zoom && !self.fit_to_page {
+            return false;
+        }
+        let center = center.or_else(|| self.viewport_bounds.map(|bounds| bounds.center()));
+        let page_point = center.zip(self.viewport_bounds).map(|(center, bounds)| {
+            let center = center - bounds.origin;
+            let page_point =
+                (center - self.scroll_handle.offset() - self.page_origin(previous_zoom))
+                    / previous_zoom;
+            (center, page_point)
+        });
+        self.zoom = zoom;
+        self.fit_to_page = false;
+        if let Some((center, page_point)) = page_point {
+            let offset = center - self.page_origin(zoom) - page_point * zoom;
+            self.scroll_handle
+                .set_offset(self.clamp_scroll_offset(offset));
+        }
+        true
+    }
+
+    fn gesture_zoom(
+        &mut self,
+        zoom: f32,
+        center: Point<Pixels>,
+        window: &mut Window,
+        cx: &mut Context<Self>,
+    ) {
+        if self.page_size.is_none()
+            || self.bytes.is_none()
+            || self.image.is_none()
+            || !self.update_zoom(zoom, Some(center))
+        {
+            return;
+        }
+        // Avoid restarting a renderer process for every small trackpad delta.
+        self.generation += 1;
+        self.render_task = None;
+        self.loading = false;
+        self.zoom_task = Some(cx.spawn_in(window, async move |this, cx| {
+            cx.background_executor().timer(ZOOM_RENDER_DELAY).await;
+            this.update_in(cx, |this, window, cx| this.request_render(window, cx))
+                .log_err();
+        }));
+        cx.notify();
+    }
+
+    fn handle_scroll_wheel(
+        &mut self,
+        event: &ScrollWheelEvent,
+        window: &mut Window,
+        cx: &mut Context<Self>,
+    ) {
+        if event.modifiers.control || event.modifiers.platform {
+            let delta: f32 = match event.delta {
+                ScrollDelta::Pixels(pixels) => pixels.y.into(),
+                ScrollDelta::Lines(lines) => lines.y * SCROLL_LINE_MULTIPLIER,
+            };
+            if delta.is_finite() && delta != 0.0 {
+                let factor = if delta > 0.0 {
+                    1.0 + delta * 0.01
+                } else {
+                    1.0 / (1.0 - delta * 0.01)
+                };
+                self.gesture_zoom(self.effective_zoom() * factor, event.position, window, cx);
+            }
+            cx.stop_propagation();
+        }
+    }
+
+    fn handle_pinch(&mut self, event: &PinchEvent, window: &mut Window, cx: &mut Context<Self>) {
+        if event.delta.is_finite() && event.delta != 0.0 && event.delta > -1.0 {
+            self.gesture_zoom(
+                self.effective_zoom() * (1.0 + event.delta),
+                event.position,
+                window,
+                cx,
+            );
+        }
+        cx.stop_propagation();
+    }
+
+    fn handle_mouse_down(
+        &mut self,
+        event: &MouseDownEvent,
+        window: &mut Window,
+        cx: &mut Context<Self>,
+    ) {
+        if self.image.is_some() {
+            self.last_mouse_position = Some(event.position);
+        }
+        self.focus_handle.focus(window, cx);
+        cx.notify();
+    }
+
+    fn handle_mouse_up(&mut self, _: &MouseUpEvent, _: &mut Window, cx: &mut Context<Self>) {
+        self.last_mouse_position = None;
+        cx.notify();
+    }
+
+    fn handle_mouse_move(
+        &mut self,
+        event: &MouseMoveEvent,
+        _: &mut Window,
+        cx: &mut Context<Self>,
+    ) {
+        if !matches!(
+            event.pressed_button,
+            Some(MouseButton::Left | MouseButton::Middle)
+        ) {
+            if self.last_mouse_position.take().is_some() {
+                cx.notify();
+            }
+        } else if let Some(previous) = self.last_mouse_position {
+            self.last_mouse_position = Some(event.position);
+            self.scroll_handle.set_offset(
+                self.clamp_scroll_offset(self.scroll_handle.offset() + event.position - previous),
+            );
+            cx.notify();
+        }
+    }
+
+    fn edit_zoom(&mut self, window: &mut Window, cx: &mut Context<Self>) {
+        let percentage = format!("{:.0}", self.effective_zoom() * 100.0);
+        let editor = cx.new(|cx| {
+            let mut editor = Editor::single_line(window, cx);
+            editor.set_text(percentage, window, cx);
+            editor.select_all(&editor::actions::SelectAll, window, cx);
+            editor
+        });
+        editor.focus_handle(cx).focus(window, cx);
+        self.page_editor = None;
+        self.page_input_error = None;
+        self.zoom_editor = Some(editor);
+        self.zoom_input_error = None;
+        cx.notify();
+    }
     fn zoom_in(&mut self, _: &ZoomIn, window: &mut Window, cx: &mut Context<Self>) {
-        self.set_zoom(self.effective_zoom() * 1.25, window, cx);
+        self.set_zoom(self.effective_zoom() * ZOOM_STEP, window, cx);
     }
     fn zoom_out(&mut self, _: &ZoomOut, window: &mut Window, cx: &mut Context<Self>) {
-        self.set_zoom(self.effective_zoom() / 1.25, window, cx);
+        self.set_zoom(self.effective_zoom() / ZOOM_STEP, window, cx);
     }
     fn reset_zoom(&mut self, _: &ResetZoom, window: &mut Window, cx: &mut Context<Self>) {
         self.set_zoom(1.0, window, cx);
+        self.scroll_handle.set_offset(point(px(0.0), px(0.0)));
+        cx.notify();
     }
     fn fit(&mut self, _: &FitToPage, window: &mut Window, cx: &mut Context<Self>) {
         self.fit_to_page = true;
@@ -645,8 +859,10 @@ impl Render for PdfView {
         let this = cx.entity().downgrade();
         let zoom = self.effective_zoom();
         let page = self.page_size.unwrap_or_default();
-        let content_width = (page.width * zoom + px(32.0)).max(self.viewport_size.width);
-        let content_height = (page.height * zoom + px(32.0)).max(self.viewport_size.height);
+        let content_width =
+            (page.width * zoom + px(PAGE_PADDING * 2.0)).max(self.viewport_size.width);
+        let content_height =
+            (page.height * zoom + px(PAGE_PADDING * 2.0)).max(self.viewport_size.height);
         let content = div()
             .id("pdf-page-scroll")
             .size_full()
@@ -654,12 +870,27 @@ impl Render for PdfView {
             .track_scroll(&self.scroll_handle)
             .child(
                 div()
-                    .p_4()
+                    .id("pdf-page-content")
+                    .p(px(PAGE_PADDING))
                     .w(content_width)
                     .h(content_height)
                     .flex()
                     .justify_center()
                     .items_start()
+                    .cursor(if self.last_mouse_position.is_some() {
+                        CursorStyle::ClosedHand
+                    } else {
+                        CursorStyle::OpenHand
+                    })
+                    .on_scroll_wheel(cx.listener(Self::handle_scroll_wheel))
+                    .on_pinch(cx.listener(Self::handle_pinch))
+                    .on_mouse_down(MouseButton::Left, cx.listener(Self::handle_mouse_down))
+                    .on_mouse_down(MouseButton::Middle, cx.listener(Self::handle_mouse_down))
+                    .on_mouse_up(MouseButton::Left, cx.listener(Self::handle_mouse_up))
+                    .on_mouse_up(MouseButton::Middle, cx.listener(Self::handle_mouse_up))
+                    .on_mouse_up_out(MouseButton::Left, cx.listener(Self::handle_mouse_up))
+                    .on_mouse_up_out(MouseButton::Middle, cx.listener(Self::handle_mouse_up))
+                    .on_mouse_move(cx.listener(Self::handle_mouse_move))
                     .when_some(self.image.clone(), |element, image| {
                         element.child(
                             img(image)
@@ -744,13 +975,34 @@ impl Render for PdfView {
                                 this.zoom_out(&ZoomOut, window, cx)
                             })),
                     )
-                    .child(
-                        Button::new("pdf-zoom-reset", zoom_label)
-                            .tooltip(|_, cx| Tooltip::for_action("Reset Zoom", &ResetZoom, cx))
-                            .on_click(cx.listener(|this, _, window, cx| {
-                                this.reset_zoom(&ResetZoom, window, cx)
-                            })),
-                    )
+                    .child(if let Some(editor) = self.zoom_editor.as_ref() {
+                        h_flex()
+                            .w(px(64.0))
+                            .child(editor.clone())
+                            .into_any_element()
+                    } else {
+                        h_flex()
+                            .id("pdf-zoom-percentage")
+                            .px_1()
+                            .cursor_pointer()
+                            .child(Label::new(zoom_label).size(LabelSize::Small))
+                            .tooltip(|_, cx| {
+                                Tooltip::with_meta(
+                                    "Edit Zoom",
+                                    None,
+                                    "Ctrl-wheel or pinch to zoom. Right-click to reset to 100%.",
+                                    cx,
+                                )
+                            })
+                            .on_click(cx.listener(|this, _, window, cx| this.edit_zoom(window, cx)))
+                            .on_mouse_down(
+                                MouseButton::Right,
+                                cx.listener(|this, _, window, cx| {
+                                    this.reset_zoom(&ResetZoom, window, cx)
+                                }),
+                            )
+                            .into_any_element()
+                    })
                     .child(
                         IconButton::new("pdf-zoom-in", IconName::Plus)
                             .aria_label("Zoom in")
@@ -778,6 +1030,9 @@ impl Render for PdfView {
             .when_some(self.page_input_error.clone(), |element, error| {
                 element.child(Label::new(error).color(Color::Error))
             })
+            .when_some(self.zoom_input_error.clone(), |element, error| {
+                element.child(Label::new(error).color(Color::Error))
+            })
             .child(
                 div()
                     .relative()
@@ -788,6 +1043,7 @@ impl Render for PdfView {
                         canvas(
                             move |bounds, window, cx| {
                                 this.update(cx, |this, cx| {
+                                    this.viewport_bounds = Some(bounds);
                                     if this.viewport_size != bounds.size {
                                         this.viewport_size = bounds.size;
                                         if this.fit_to_page && this.page_size.is_some() {
@@ -972,7 +1228,7 @@ pub fn init(cx: &mut App) {
 mod tests {
     use super::*;
     use fs::{FakeFs, Fs};
-    use gpui::{TestAppContext, VisualTestContext};
+    use gpui::{Modifiers, TestAppContext, VisualTestContext};
     use settings::SettingsStore;
     use std::path::Path;
 
@@ -1137,6 +1393,277 @@ mod tests {
             assert_eq!(view.zoom, MIN_ZOOM);
         });
         cx.run_until_parked();
+    }
+
+    #[gpui::test(iterations = 5)]
+    async fn wheel_zoom_is_anchored_and_ordinary_scroll_stays_on_the_page(cx: &mut TestAppContext) {
+        let (project, document) = open_pdf(TWO_PAGES, cx).await;
+        let (view, cx) =
+            cx.add_window_view(|window, cx| PdfView::new(document, project, 0, window, cx));
+        cx.simulate_resize(size(px(500.0), px(400.0)));
+        draw_window(cx);
+        view.update_in(cx, |view, window, cx| {
+            view.set_zoom(3.0, window, cx);
+            view.scroll_handle.set_offset(point(px(-200.0), px(-100.0)));
+        });
+        draw_window(cx);
+        let (position, page_point, bitmap) = view.read_with(cx, |view, _| {
+            let bounds = view.viewport_bounds.expect("viewport bounds");
+            let position = bounds.origin + point(px(250.0), px(150.0));
+            let page_point =
+                (position - bounds.origin - view.scroll_handle.offset() - view.page_origin(3.0))
+                    / 3.0;
+            (
+                position,
+                page_point,
+                view.image.clone().expect("page bitmap"),
+            )
+        });
+        cx.simulate_event(ScrollWheelEvent {
+            position,
+            delta: ScrollDelta::Pixels(point(px(0.0), px(0.5))),
+            modifiers: Modifiers {
+                control: true,
+                ..Default::default()
+            },
+            ..Default::default()
+        });
+        view.read_with(cx, |view, _| {
+            assert!(
+                (view.zoom - 3.015).abs() < 0.0001,
+                "fractional pixel deltas must not be rounded"
+            );
+            let bounds = view.viewport_bounds.expect("viewport bounds");
+            let anchored = bounds.origin
+                + view.scroll_handle.offset()
+                + view.page_origin(view.zoom)
+                + page_point * view.zoom;
+            assert!((anchored.x - position.x).abs() < px(0.01));
+            assert!(
+                (anchored.y - position.y).abs() < px(0.01),
+                "Ctrl-wheel must not also scroll"
+            );
+            assert!(Arc::ptr_eq(
+                view.image.as_ref().expect("scaled bitmap"),
+                &bitmap
+            ));
+            assert!(view.zoom_task.is_some());
+            assert!(!view.fit_to_page);
+        });
+        draw_window(cx);
+        let offset = view.read_with(cx, |view, _| view.scroll_handle.offset());
+        cx.simulate_event(ScrollWheelEvent {
+            position,
+            delta: ScrollDelta::Pixels(point(px(-12.0), px(-30.0))),
+            ..Default::default()
+        });
+        draw_window(cx);
+        view.read_with(cx, |view, _| {
+            assert_eq!(view.page_index, 0);
+            assert!((view.zoom - 3.015).abs() < 0.0001);
+            assert!(view.scroll_handle.offset().y < offset.y);
+        });
+        cx.executor().advance_clock(ZOOM_RENDER_DELAY);
+        cx.run_until_parked();
+        view.read_with(cx, |view, _| {
+            assert!(view.zoom_task.is_none());
+            assert!(!view.loading);
+            assert!(view.error.is_none());
+            assert!(!Arc::ptr_eq(
+                view.image.as_ref().expect("sharp bitmap"),
+                &bitmap
+            ));
+        });
+    }
+
+    #[gpui::test]
+    async fn line_wheel_and_native_pinch_leave_fit_and_respect_zoom_limits(
+        cx: &mut TestAppContext,
+    ) {
+        let (project, document) = open_pdf(TWO_PAGES, cx).await;
+        let (view, cx) =
+            cx.add_window_view(|window, cx| PdfView::new(document, project, 0, window, cx));
+        draw_window(cx);
+        let position = view.read_with(cx, |view, _| {
+            view.viewport_bounds.expect("viewport").center()
+        });
+        cx.simulate_event(ScrollWheelEvent {
+            position,
+            delta: ScrollDelta::Lines(point(1.0, 0.0)),
+            modifiers: Modifiers {
+                control: true,
+                ..Default::default()
+            },
+            ..Default::default()
+        });
+        assert!(
+            view.read_with(cx, |view, _| view.fit_to_page),
+            "horizontal-only zoom input is ignored"
+        );
+        let fit_zoom = view.read_with(cx, |view, _| view.effective_zoom());
+        cx.simulate_event(ScrollWheelEvent {
+            position,
+            delta: ScrollDelta::Lines(point(0.0, 1.0)),
+            modifiers: Modifiers {
+                platform: true,
+                ..Default::default()
+            },
+            ..Default::default()
+        });
+        assert!((view.read_with(cx, |view, _| view.zoom) - fit_zoom * 1.2).abs() < 0.0001);
+        draw_window(cx);
+        cx.simulate_event(ScrollWheelEvent {
+            position,
+            delta: ScrollDelta::Lines(point(0.0, -1.0)),
+            modifiers: Modifiers {
+                control: true,
+                ..Default::default()
+            },
+            ..Default::default()
+        });
+        assert!((view.read_with(cx, |view, _| view.zoom) - fit_zoom).abs() < 0.0001);
+        draw_window(cx);
+        cx.simulate_event(PinchEvent {
+            position,
+            delta: 0.1,
+            ..Default::default()
+        });
+        assert!((view.read_with(cx, |view, _| view.zoom) - fit_zoom * 1.1).abs() < 0.0001);
+        for delta in [f32::NAN, f32::INFINITY, -1.0, -2.0, 0.0] {
+            cx.simulate_event(PinchEvent {
+                position,
+                delta,
+                ..Default::default()
+            });
+        }
+        assert!((view.read_with(cx, |view, _| view.zoom) - fit_zoom * 1.1).abs() < 0.0001);
+        view.update_in(cx, |view, window, cx| {
+            view.gesture_zoom(1000.0, position, window, cx);
+            assert_eq!(view.zoom, MAX_ZOOM);
+            view.gesture_zoom(0.0001, position, window, cx);
+            assert_eq!(view.zoom, MIN_ZOOM);
+            assert_eq!(view.scroll_handle.offset(), point(px(0.0), px(0.0)));
+            view.fit(&FitToPage, window, cx);
+            assert!(view.fit_to_page);
+            assert!(
+                view.zoom_task.is_none(),
+                "Fit cancels a pending gesture render"
+            );
+        });
+        cx.run_until_parked();
+        view.update_in(cx, |view, window, cx| {
+            view.reload_pdf(&Reload, window, cx);
+            let generation = view.generation;
+            view.handle_pinch(
+                &PinchEvent {
+                    position,
+                    delta: 0.1,
+                    ..Default::default()
+                },
+                window,
+                cx,
+            );
+            assert_eq!(
+                view.generation, generation,
+                "a gesture cannot invalidate a pending file load"
+            );
+        });
+        cx.run_until_parked();
+        assert!(view.read_with(cx, |view, _| view.bytes.is_some()
+            && view.image.is_some()
+            && !view.loading));
+    }
+
+    #[gpui::test]
+    async fn hand_drag_clamps_and_releasing_outside_ends_panning(cx: &mut TestAppContext) {
+        let (project, document) = open_pdf(TWO_PAGES, cx).await;
+        let (view, cx) =
+            cx.add_window_view(|window, cx| PdfView::new(document, project, 0, window, cx));
+        cx.simulate_resize(size(px(500.0), px(400.0)));
+        draw_window(cx);
+        view.update_in(cx, |view, window, cx| view.set_zoom(4.0, window, cx));
+        draw_window(cx);
+        let position = view.read_with(cx, |view, _| {
+            view.viewport_bounds.expect("viewport").center()
+        });
+        cx.simulate_mouse_down(position, MouseButton::Left, Modifiers::none());
+        let initial_offset = view.read_with(cx, |view, _| view.scroll_handle.offset());
+        cx.simulate_mouse_move(
+            position - point(px(30.0), px(20.0)),
+            MouseButton::Left,
+            Modifiers::none(),
+        );
+        view.read_with(cx, |view, _| {
+            assert_eq!(view.scroll_handle.offset().y, initial_offset.y - px(20.0))
+        });
+        cx.simulate_mouse_up(
+            point(px(-1.0), px(-1.0)),
+            MouseButton::Left,
+            Modifiers::none(),
+        );
+        assert!(view.read_with(cx, |view, _| view.last_mouse_position.is_none()));
+        let offset = view.read_with(cx, |view, _| view.scroll_handle.offset());
+        cx.simulate_mouse_move(position, None, Modifiers::none());
+        assert_eq!(
+            view.read_with(cx, |view, _| view.scroll_handle.offset()),
+            offset
+        );
+        view.update(cx, |view, _| {
+            view.scroll_handle.set_offset(point(px(-5.0), px(-5.0)))
+        });
+        draw_window(cx);
+        cx.simulate_mouse_down(position, MouseButton::Middle, Modifiers::none());
+        cx.simulate_mouse_move(
+            position + point(px(30.0), px(20.0)),
+            MouseButton::Middle,
+            Modifiers::none(),
+        );
+        assert_eq!(
+            view.read_with(cx, |view, _| view.scroll_handle.offset()),
+            point(px(0.0), px(0.0))
+        );
+        cx.simulate_mouse_up(position, MouseButton::Middle, Modifiers::none());
+    }
+
+    #[gpui::test]
+    async fn zoom_percentage_validates_confirms_and_cancels(cx: &mut TestAppContext) {
+        let (project, document) = open_pdf(TWO_PAGES, cx).await;
+        let (view, cx) =
+            cx.add_window_view(|window, cx| PdfView::new(document, project, 0, window, cx));
+        draw_window(cx);
+        view.update_in(cx, |view, window, cx| view.edit_zoom(window, cx));
+        draw_window(cx);
+        for invalid in ["0", "801", "NaN", "infinity", "text"] {
+            view.update_in(cx, |view, window, cx| {
+                view.zoom_editor
+                    .as_ref()
+                    .expect("zoom editor")
+                    .update(cx, |editor, cx| editor.set_text(invalid, window, cx));
+            });
+            cx.dispatch_action(menu::Confirm);
+            assert!(view.read_with(cx, |view, _| view.zoom_input_error.is_some()));
+        }
+        view.update_in(cx, |view, window, cx| {
+            view.zoom_editor
+                .as_ref()
+                .expect("zoom editor")
+                .update(cx, |editor, cx| editor.set_text("125.5%", window, cx));
+        });
+        cx.dispatch_action(menu::Confirm);
+        cx.run_until_parked();
+        assert!((view.read_with(cx, |view, _| view.zoom) - 1.255).abs() < 0.0001);
+        view.update_in(cx, |view, window, cx| view.edit_zoom(window, cx));
+        draw_window(cx);
+        cx.dispatch_action(menu::Cancel);
+        assert!(view.read_with(cx, |view, _| view.zoom_editor.is_none()));
+        view.update_in(cx, |view, window, cx| {
+            view.reset_zoom(&ResetZoom, window, cx)
+        });
+        cx.run_until_parked();
+        view.read_with(cx, |view, _| {
+            assert_eq!(view.zoom, 1.0);
+            assert_eq!(view.scroll_handle.offset(), point(px(0.0), px(0.0)));
+        });
     }
 }
 

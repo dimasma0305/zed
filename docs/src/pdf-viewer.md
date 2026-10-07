@@ -26,10 +26,23 @@ cancel. You can also use these commands while the PDF tab has focus:
 
 ## Zoom and reload
 
-Use the minus and plus buttons to change zoom. Click the zoom percentage to
-return to 100%. **Fit Page** fits the current page in the available space and
-adjusts when you resize the pane. At larger zoom levels, use the scrollbars,
-mouse wheel, or trackpad to move around the page.
+Hold `Ctrl` and use the mouse wheel or trackpad to zoom around the pointer,
+using the same sensitivity as Zed's image viewer. On macOS, `Cmd` also works.
+Native trackpad pinch gestures zoom around the gesture center when the
+platform and hardware report them to Zed. Ordinary wheel and two-finger scroll
+move around the current page without changing the page number. Drag with the
+left or middle mouse button to pan, or use the scrollbars.
+
+The minus and plus buttons change zoom in 10% steps. Click the zoom percentage
+to enter a value from 10% to 800%, and press `Enter` to apply or `Escape` to
+cancel. Right-click the percentage or use **Reset Zoom** to return to 100%.
+**Fit Page** fits the current page in the available space and adjusts when you
+resize the pane. Zooming manually leaves Fit Page mode.
+
+The point under the pointer stays fixed while zooming, except where the page
+fits in the pane or reaches its scroll boundary. PDF panning stays within the
+page bounds. During a gesture, Zed scales the current bitmap immediately and
+renders a sharper replacement after the gesture settles.
 
 | Command                         | Keybinding                  |
 | ------------------------------- | --------------------------- |

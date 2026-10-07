@@ -639,8 +639,39 @@ async fn test_remote_pdf_view_navigation_reload_and_disconnect(
     visual_cx.dispatch_action(pdf_viewer::ResetZoom);
     visual_cx.dispatch_action(pdf_viewer::ZoomIn);
     visual_cx.run_until_parked();
+    visual_cx.update(|window, cx| {
+        window.refresh();
+        window.draw(cx).clear(cx);
+    });
+    let keyboard_zoom = view.read_with(visual_cx, |view, _| view.test_state().zoom);
+    assert!(keyboard_zoom > 1.0);
+    visual_cx.simulate_event(gpui::ScrollWheelEvent {
+        position: gpui::point(gpui::px(200.0), gpui::px(200.0)),
+        delta: gpui::ScrollDelta::Pixels(gpui::point(gpui::px(0.0), gpui::px(2.5))),
+        modifiers: gpui::Modifiers {
+            control: true,
+            ..Default::default()
+        },
+        ..Default::default()
+    });
+    let wheel_zoom = view.read_with(visual_cx, |view, _| view.test_state().zoom);
+    assert!((wheel_zoom - keyboard_zoom * 1.025).abs() < 0.0001);
+    visual_cx.update(|window, cx| {
+        window.refresh();
+        window.draw(cx).clear(cx);
+    });
+    visual_cx.simulate_event(gpui::PinchEvent {
+        position: gpui::point(gpui::px(200.0), gpui::px(200.0)),
+        delta: 0.1,
+        ..Default::default()
+    });
     let zoom = view.read_with(visual_cx, |view, _| view.test_state().zoom);
-    assert!(zoom > 1.0);
+    assert!((zoom - wheel_zoom * 1.1).abs() < 0.0001);
+    visual_cx
+        .executor()
+        .advance_clock(std::time::Duration::from_millis(100));
+    visual_cx.run_until_parked();
+    assert!(view.read_with(visual_cx, |view, _| view.test_state().has_image));
     visual_cx.dispatch_action(pdf_viewer::Reload);
     visual_cx.run_until_parked();
     view.read_with(visual_cx, |view, _| {
