@@ -68,8 +68,9 @@ a total process memory limit.
 
 Follow [Building Zed for Windows](./development/windows.md),
 [macOS](./development/macos.md), or [Linux](./development/linux.md).
-The repository pins Rust 1.98.1. On Windows, the C++ build tools, SDK, CMake,
-and Spectre-mitigated libraries listed in the Windows guide are required.
+The repository pins Rust 1.98.1. On Windows, the C++ build tools, Windows SDK
+26100, CMake, and Spectre-mitigated libraries listed in the Windows guide are
+required.
 
 From the `feature/pdf-viewer` branch:
 
@@ -88,8 +89,8 @@ When the Windows checks succeed, the workflow produces a
 `pdf-zed-windows-development` artifact. Extract all its files into one folder
 and run `zed.exe`. This is an unsigned development build with fonts, keymaps,
 and other assets embedded using Zed's `util/debug-embed` feature. Its commit
-and executable checksum are included. It requires Windows graphics drivers
-that support Vulkan, as described in the Windows build guide.
+and executable checksum are included. Use current Windows graphics drivers;
+see the Windows build guide for graphics troubleshooting.
 
 The Windows package uses Zed's stable settings and workspace database. Upstream
 automatic updates are disabled through the build's `ZED_UPDATE_EXPLANATION`
