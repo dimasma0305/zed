@@ -2,7 +2,7 @@ name: PDF viewer fork checks
 
 on:
   push:
-    branches: [feature/pdf-viewer]
+    branches: [feature/pdf-viewer, main]
   pull_request:
     branches: [main]
   workflow_dispatch:
@@ -28,7 +28,8 @@ jobs:
       - uses: actions/checkout@93cb6efe18208431cddfb8368fd83d5badbf9bfd
       - name: Install the upstream Rust toolchain on the disposable runner
         run: rustup toolchain install 1.98.1 --profile minimal --component rustfmt --component clippy
-      - uses: actions/cache@0057852bfaa89a56745cba8c7296529d2fc39830
+      - uses: actions/cache/restore@0057852bfaa89a56745cba8c7296529d2fc39830
+        id: pdf-cache
         with:
           path: |
             ~/.cargo/registry
@@ -50,6 +51,14 @@ jobs:
           retention-days: 7
       - name: Lint the renderer using the repository wrapper
         run: ./script/clippy -p pdf_renderer --locked
+      - uses: actions/cache/save@0057852bfaa89a56745cba8c7296529d2fc39830
+        if: always() && steps.pdf-cache.outputs.cache-hit != 'true'
+        with:
+          path: |
+            ~/.cargo/registry
+            ~/.cargo/git
+            target
+          key: pdf-viewer-${{ runner.os }}-rust-1.98.1-${{ hashFiles('Cargo.lock') }}
   windows:
     if: github.repository == 'dimasma0305/zed'
     runs-on: windows-2022
@@ -58,7 +67,8 @@ jobs:
       - uses: actions/checkout@93cb6efe18208431cddfb8368fd83d5badbf9bfd
       - name: Install the upstream Rust toolchain on the disposable runner
         run: rustup toolchain install 1.98.1 --profile minimal
-      - uses: actions/cache@0057852bfaa89a56745cba8c7296529d2fc39830
+      - uses: actions/cache/restore@0057852bfaa89a56745cba8c7296529d2fc39830
+        id: pdf-cache
         with:
           path: |
             ~/.cargo/registry
@@ -100,3 +110,11 @@ jobs:
           path: pdf-zed-windows
           retention-days: 7
           if-no-files-found: error
+      - uses: actions/cache/save@0057852bfaa89a56745cba8c7296529d2fc39830
+        if: always() && steps.pdf-cache.outputs.cache-hit != 'true'
+        with:
+          path: |
+            ~/.cargo/registry
+            ~/.cargo/git
+            target
+          key: pdf-viewer-${{ runner.os }}-rust-1.98.1-${{ hashFiles('Cargo.lock') }}
