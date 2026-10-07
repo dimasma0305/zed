@@ -55,6 +55,7 @@ downloaded and opened locally.
 Only the current page is rendered. Files are limited to 128 MiB and 10,000
 pages. Page bitmaps are limited to 16 megapixels and 8192 pixels per dimension;
 large pages use a lower rendering resolution. Zoom ranges from 10% to 800%.
+Page dimensions above 1,000,000 points are rejected before reaching the UI.
 A render that takes longer than 30 seconds stops with an error.
 
 PDF parsing and rendering run in a separate process. Changing pages, reloading,

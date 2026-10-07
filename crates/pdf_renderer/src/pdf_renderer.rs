@@ -12,6 +12,7 @@ pub const MAX_PIXELS: usize = 16 * 1024 * 1024;
 pub const MAX_OUTPUT_BYTES: usize = MAX_PIXELS * 4 + 28;
 const MAX_PAGES: usize = 10_000;
 const MAX_DIMENSION: f32 = 8192.0;
+const MAX_PAGE_DIMENSION: f32 = 1_000_000.0;
 const REQUEST_MAGIC: &[u8; 8] = b"ZPDF0001";
 const RESPONSE_MAGIC: &[u8; 8] = b"ZIMG0001";
 
@@ -67,7 +68,7 @@ pub fn read_response(mut bytes: &[u8]) -> Result<RenderedPage> {
         "Invalid PDF page count"
     );
     ensure!(
-        page_width.is_finite() && page_height.is_finite() && page_width > 0.0 && page_height > 0.0,
+        valid_page_dimensions(page_width, page_height),
         "Invalid PDF page dimensions"
     );
     ensure!(
@@ -132,7 +133,7 @@ pub fn render_page(bytes: Vec<u8>, page_index: u32, scale: f32) -> Result<Render
 
 fn bounded_scale(width: f32, height: f32, requested: f32) -> Result<f32> {
     ensure!(
-        width.is_finite() && height.is_finite() && width > 0.0 && height > 0.0,
+        valid_page_dimensions(width, height),
         "PDF page has invalid dimensions"
     );
     let mut scale = requested
@@ -155,6 +156,15 @@ fn bounded_scale(width: f32, height: f32, requested: f32) -> Result<f32> {
         "PDF page dimensions cannot be rendered within the bitmap limit"
     );
     Ok(scale)
+}
+
+fn valid_page_dimensions(width: f32, height: f32) -> bool {
+    width.is_finite()
+        && height.is_finite()
+        && width > 0.0
+        && height > 0.0
+        && width <= MAX_PAGE_DIMENSION
+        && height <= MAX_PAGE_DIMENSION
 }
 
 pub fn run_worker(mut input: impl Read, mut output: impl Write) -> Result<()> {
@@ -240,6 +250,9 @@ mod tests {
         run_worker(request.as_slice(), &mut output).expect("worker");
         let page = read_response(&output).expect("response");
         assert_eq!((page.page_count, page.width, page.height), (2, 300, 200));
+        let mut oversized_metadata = output.clone();
+        oversized_metadata[12..16].copy_from_slice(&f32::MAX.to_le_bytes());
+        assert!(read_response(&oversized_metadata).is_err());
         output.pop();
         assert!(read_response(&output).is_err());
     }
@@ -257,6 +270,8 @@ mod tests {
         assert!(request_header(0, 1.0, MAX_FILE_BYTES + 1).is_err());
         assert!(bounded_scale(f32::INFINITY, 300.0, 1.0).is_err());
         assert!(bounded_scale(0.0, 300.0, 1.0).is_err());
+        assert!(bounded_scale(f32::MAX, 300.0, 1.0).is_err());
+        assert!(bounded_scale(300.0, MAX_PAGE_DIMENSION + 1.0, 1.0).is_err());
         let scale = bounded_scale(100_000.0, 100_000.0, 8.0).expect("bounded scale");
         assert!((100_000.0 * scale).powi(2) <= MAX_PIXELS as f32);
         let scale = bounded_scale(123_456.0, 78_901.0, 8.0).expect("rounded dimensions");
