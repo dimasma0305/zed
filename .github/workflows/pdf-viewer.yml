@@ -130,6 +130,8 @@ jobs:
         run: cargo check --locked -p pdf_viewer
       - name: Run PDF viewer GPUI tests
         run: cargo test --locked -p pdf_viewer
+      - name: Test Windows bundled-server upload paths and identity checks
+        run: cargo test --locked -p remote --features bundled-remote-server transport::bundled_server::tests
       - name: Check the Zed application
         run: cargo check --locked -p zed
       - name: Generate dependency license notices

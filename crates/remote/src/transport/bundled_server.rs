@@ -140,7 +140,10 @@ pub(super) fn select_archive(
         format!("{:x}", digest.finalize()) == server.sha256.to_ascii_lowercase(),
         "Remote server archive checksum does not match the package"
     );
-    Ok(archive_path)
+    // Windows OpenSSH treats a verbatim drive prefix as a remote SCP hostname.
+    Ok(util::paths::SanitizedPath::new(&archive_path)
+        .as_path()
+        .to_path_buf())
 }
 
 #[cfg(test)]
@@ -198,6 +201,22 @@ mod tests {
                 .is_file()
         );
         assert!(select(directory.path(), &manifest, RemoteArch::Aarch64).is_err());
+    }
+
+    #[cfg(windows)]
+    #[test]
+    fn returns_a_windows_upload_path_without_a_verbatim_drive_prefix() {
+        let (directory, manifest) = fixture();
+        let archive = select(directory.path(), &manifest, RemoteArch::X86_64).unwrap();
+        assert!(matches!(
+            archive.components().next(),
+            Some(std::path::Component::Prefix(prefix))
+                if matches!(prefix.kind(), std::path::Prefix::Disk(_))
+        ));
+        assert_eq!(
+            fs::read(archive).unwrap(),
+            b"original local fixture; selection does not execute it"
+        );
     }
 
     #[test]
