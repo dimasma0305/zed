@@ -84,7 +84,7 @@ jobs:
       - name: Generate dependency license notices
         run: ./script/generate-licenses.ps1
       - name: Build the Windows development application
-        run: cargo build --locked -p zed --bin zed --features util/debug-embed
+        run: cargo build --locked -p zed -p cli --bin zed --bin cli --features util/debug-embed
       - name: Check the PDF helper inside the Windows application
         run: python crates/pdf_renderer/tests/check_worker.py target/debug/zed.exe pdf-windows-qa
       - uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a
@@ -97,6 +97,7 @@ jobs:
         run: |
           New-Item -ItemType Directory -Path pdf-zed-windows -Force
           Copy-Item -LiteralPath target/debug/zed.exe -Destination pdf-zed-windows
+          Copy-Item -LiteralPath target/debug/cli.exe -Destination pdf-zed-windows
           Copy-Item -LiteralPath target/debug/conpty.dll -Destination pdf-zed-windows
           Copy-Item -LiteralPath target/debug/OpenConsole.exe -Destination pdf-zed-windows
           Copy-Item -LiteralPath LICENSE-GPL -Destination pdf-zed-windows

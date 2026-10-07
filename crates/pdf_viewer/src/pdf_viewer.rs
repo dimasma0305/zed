@@ -550,7 +550,7 @@ impl Focusable for PdfView {
 }
 
 impl Render for PdfView {
-    fn render(&mut self, _: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
+    fn render(&mut self, window: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
         let page_label = if self.page_count == 0 {
             "Page — / —".to_string()
         } else {
@@ -583,6 +583,13 @@ impl Render for PdfView {
                                 .flex_shrink_0(),
                         )
                     }),
+            )
+            .custom_scrollbars(
+                ui::Scrollbars::new(ui::ScrollAxes::Both)
+                    .tracked_scroll_handle(&self.scroll_handle)
+                    .tracked_entity(cx.entity_id()),
+                window,
+                cx,
             );
         v_flex()
             .key_context("PdfViewer")
