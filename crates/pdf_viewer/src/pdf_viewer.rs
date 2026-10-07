@@ -887,11 +887,19 @@ pub fn init(cx: &mut App) {
 mod tests {
     use super::*;
     use fs::{FakeFs, Fs};
-    use gpui::TestAppContext;
+    use gpui::{TestAppContext, VisualTestContext};
     use settings::SettingsStore;
     use std::path::Path;
 
     const TWO_PAGES: &[u8] = include_bytes!("../../pdf_renderer/tests/fixtures/two-pages.pdf");
+
+    fn draw_window(cx: &mut VisualTestContext) {
+        cx.update(|window, cx| {
+            window.refresh();
+            window.draw(cx).clear(cx);
+        });
+        cx.run_until_parked();
+    }
 
     async fn open_pdf(
         bytes: &[u8],
@@ -946,6 +954,59 @@ mod tests {
         view.read_with(cx, |view, _| {
             assert!(view.image.is_some());
             assert_eq!(view.page_size, Some(size(px(300.0), px(200.0))));
+        });
+    }
+
+    #[gpui::test]
+    async fn draws_scrollable_pages_and_validates_page_input(cx: &mut TestAppContext) {
+        let (project, document) = open_pdf(TWO_PAGES, cx).await;
+        let (view, cx) =
+            cx.add_window_view(|window, cx| PdfView::new(document, project, 0, window, cx));
+        cx.simulate_resize(size(px(500.0), px(400.0)));
+        draw_window(cx);
+        view.update_in(cx, |view, window, cx| {
+            view.focus_handle.focus(window, cx);
+            view.set_zoom(4.0, window, cx);
+        });
+        cx.run_until_parked();
+        draw_window(cx);
+        view.read_with(cx, |view, _| {
+            let maximum = view.scroll_handle.max_offset();
+            assert!(
+                maximum.x > px(0.0),
+                "the enlarged page must scroll horizontally"
+            );
+            assert!(
+                maximum.y > px(0.0),
+                "the enlarged page must scroll vertically"
+            );
+        });
+        cx.dispatch_action(GoToPage);
+        draw_window(cx);
+        view.update_in(cx, |view, window, cx| {
+            view.page_editor
+                .as_ref()
+                .expect("page input")
+                .update(cx, |editor, cx| editor.set_text("0", window, cx));
+        });
+        cx.dispatch_action(menu::Confirm);
+        view.read_with(cx, |view, _| {
+            assert!(view.page_input_error.is_some());
+            assert_eq!(view.page_index, 0);
+        });
+        view.update_in(cx, |view, window, cx| {
+            view.page_editor
+                .as_ref()
+                .expect("page input")
+                .update(cx, |editor, cx| editor.set_text("2", window, cx));
+        });
+        cx.dispatch_action(menu::Confirm);
+        cx.run_until_parked();
+        draw_window(cx);
+        view.read_with(cx, |view, _| {
+            assert_eq!(view.page_index, 1);
+            assert!(view.page_editor.is_none());
+            assert!(view.error.is_none());
         });
     }
 
