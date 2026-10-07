@@ -767,6 +767,8 @@ async fn test_remote_binary_ranges_and_cancellation_capacity(
             .contains("Too many")
     );
     drop(cancelled);
+    // GPUI processes dropped task cancellation on the executor's next turn.
+    cx.run_until_parked();
     let retry = project
         .update(cx, |project, cx| project.read_file_range(path, 16, 32, cx))
         .await
