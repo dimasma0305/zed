@@ -84,4 +84,17 @@ or runtime installation is required. The `pdf-viewer.yml` workflow checks this
 fork on GitHub-hosted Linux and Windows runners. The upstream Zed workflows
 restrict their build jobs to upstream repository owners.
 
+When the Windows checks succeed, the workflow produces a
+`pdf-zed-windows-development` artifact. Extract all its files into one folder
+and run `zed.exe`. This is an unsigned development build with fonts, keymaps,
+and other assets embedded using Zed's `util/debug-embed` feature. Its commit
+and executable checksum are included. It requires Windows graphics drivers
+that support Vulkan, as described in the Windows build guide.
+
+To keep its project state and extensions in a separate directory, run:
+
+```powershell
+.\zed.exe --user-data-dir "$PWD\pdf-zed-data" "C:\path\to\report.pdf"
+```
+
 See [Finding and Navigating](./finding-navigating.md) for file navigation.

@@ -53,7 +53,7 @@ jobs:
   windows:
     if: github.repository == 'dimasma0305/zed'
     runs-on: windows-2022
-    timeout-minutes: 90
+    timeout-minutes: 120
     steps:
       - uses: actions/checkout@93cb6efe18208431cddfb8368fd83d5badbf9bfd
       - name: Install the upstream Rust toolchain on the disposable runner
@@ -71,3 +71,32 @@ jobs:
         run: cargo test --locked -p pdf_viewer
       - name: Check the Zed application
         run: cargo check --locked -p zed
+      - name: Generate dependency license notices
+        run: ./script/generate-licenses.ps1
+      - name: Build the Windows development application
+        run: cargo build --locked -p zed --bin zed --features util/debug-embed
+      - name: Check the PDF helper inside the Windows application
+        run: python crates/pdf_renderer/tests/check_worker.py target/debug/zed.exe pdf-windows-qa
+      - uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a
+        with:
+          name: pdf-windows-qa
+          path: pdf-windows-qa
+          retention-days: 7
+      - name: Collect the Windows development application
+        shell: pwsh
+        run: |
+          New-Item -ItemType Directory -Path pdf-zed-windows -Force
+          Copy-Item -LiteralPath target/debug/zed.exe -Destination pdf-zed-windows
+          Copy-Item -LiteralPath target/debug/conpty.dll -Destination pdf-zed-windows
+          Copy-Item -LiteralPath target/debug/OpenConsole.exe -Destination pdf-zed-windows
+          Copy-Item -LiteralPath LICENSE-GPL -Destination pdf-zed-windows
+          Copy-Item -LiteralPath assets/licenses.md -Destination pdf-zed-windows
+          Copy-Item -LiteralPath docs/src/pdf-viewer.md -Destination pdf-zed-windows
+          git rev-parse HEAD | Set-Content -Path pdf-zed-windows/commit.txt
+          Get-FileHash -Algorithm SHA256 pdf-zed-windows/zed.exe | Format-List | Out-File pdf-zed-windows/sha256.txt
+      - uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a
+        with:
+          name: pdf-zed-windows-development
+          path: pdf-zed-windows
+          retention-days: 7
+          if-no-files-found: error
