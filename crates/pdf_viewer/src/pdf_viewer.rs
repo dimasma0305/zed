@@ -886,7 +886,7 @@ pub fn init(cx: &mut App) {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use fs::FakeFs;
+    use fs::{FakeFs, Fs};
     use gpui::TestAppContext;
     use settings::SettingsStore;
     use std::path::Path;
@@ -903,6 +903,9 @@ mod tests {
             theme_settings::init(theme::LoadThemes::JustBase, cx);
         });
         let fs = FakeFs::new(cx.executor());
+        fs.create_dir(Path::new("/root"))
+            .await
+            .expect("test root should be created");
         fs.insert_file("/root/report.PDF", bytes.to_vec()).await;
         let project = Project::test(fs, [Path::new("/root")], cx).await;
         let path = cx.update(|cx| {
