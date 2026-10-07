@@ -1,0 +1,62 @@
+name: PDF viewer fork checks
+
+on:
+  push:
+    branches: [feature/pdf-viewer]
+  pull_request:
+    branches: [main]
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: pdf-viewer-${{ github.ref }}
+  cancel-in-progress: true
+
+env:
+  RUSTUP_TOOLCHAIN: 1.98.1
+  CARGO_INCREMENTAL: '0'
+  CARGO_TERM_COLOR: always
+
+jobs:
+  renderer:
+    if: github.repository == 'dimasma0305/zed'
+    runs-on: ubuntu-24.04
+    timeout-minutes: 30
+    steps:
+      - uses: actions/checkout@93cb6efe18208431cddfb8368fd83d5badbf9bfd
+      - name: Install the upstream Rust toolchain on the disposable runner
+        run: rustup toolchain install 1.98.1 --profile minimal --component rustfmt --component clippy
+      - name: Resolve new workspace dependencies while preserving locked versions
+        run: cargo update --workspace
+      - uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a
+        with:
+          name: pdf-viewer-lockfile
+          path: Cargo.lock
+          retention-days: 7
+      - name: Check Rust formatting
+        run: cargo fmt -p pdf_renderer -p pdf_viewer -p zed -- --check
+      - name: Test the renderer and worker protocol
+        run: cargo test --locked -p pdf_renderer
+      - name: Lint the renderer using the repository wrapper
+        run: ./script/clippy -p pdf_renderer --locked
+  windows:
+    if: github.repository == 'dimasma0305/zed'
+    needs: renderer
+    runs-on: windows-2022
+    timeout-minutes: 90
+    steps:
+      - uses: actions/checkout@93cb6efe18208431cddfb8368fd83d5badbf9bfd
+      - name: Install the upstream Rust toolchain on the disposable runner
+        run: rustup toolchain install 1.98.1 --profile minimal
+      - uses: actions/download-artifact@3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c
+        with:
+          name: pdf-viewer-lockfile
+          path: .
+      - name: Check PDF viewer integration
+        run: cargo check --locked -p pdf_viewer
+      - name: Run PDF viewer GPUI tests
+        run: cargo test --locked -p pdf_viewer
+      - name: Check the Zed application
+        run: cargo check --locked -p zed

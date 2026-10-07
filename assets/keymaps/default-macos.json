@@ -1660,6 +1660,22 @@
     },
   },
   {
+    "context": "PdfViewer",
+    "bindings": {
+      "pageup": "pdf_viewer::PreviousPage",
+      "pagedown": "pdf_viewer::NextPage",
+      "home": "pdf_viewer::FirstPage",
+      "end": "pdf_viewer::LastPage",
+      "cmd-g": "pdf_viewer::GoToPage",
+      "cmd-=": "pdf_viewer::ZoomIn",
+      "cmd-+": "pdf_viewer::ZoomIn",
+      "cmd--": "pdf_viewer::ZoomOut",
+      "cmd-0": "pdf_viewer::ResetZoom",
+      "cmd-shift-0": "pdf_viewer::FitToPage",
+      "cmd-r": "pdf_viewer::Reload",
+    },
+  },
+  {
     "context": "ImageViewer",
     "use_key_equivalents": true,
     "bindings": {

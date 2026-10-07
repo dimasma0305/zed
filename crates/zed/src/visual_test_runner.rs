@@ -38,12 +38,18 @@
 // Stub main for non-macOS platforms
 #[cfg(not(target_os = "macos"))]
 fn main() {
+    if pdf_renderer::run_worker_if_invoked() {
+        return;
+    }
     eprintln!("Visual test runner is only supported on macOS");
     std::process::exit(1);
 }
 
 #[cfg(target_os = "macos")]
 fn main() {
+    if pdf_renderer::run_worker_if_invoked() {
+        return;
+    }
     // Set ZED_STATELESS early to prevent file system access to real config directories
     // This must be done before any code accesses zed_env_vars::ZED_STATELESS
     // SAFETY: We're at the start of main(), before any threads are spawned
@@ -189,6 +195,7 @@ fn run_visual_tests(project_path: PathBuf, update_baseline: bool) -> Result<()> 
         outline_panel::init(cx);
         terminal_view::init(cx);
         image_viewer::init(cx);
+        pdf_viewer::init(cx);
         search::init(cx);
         lsp_locations::init(cx);
         cx.set_global(workspace::PaneSearchBarCallbacks {
