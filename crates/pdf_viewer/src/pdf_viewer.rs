@@ -15,7 +15,7 @@ use pdf_renderer::{MAX_FILE_BYTES, RenderedPage};
 use pdf_renderer::{MAX_OUTPUT_BYTES, WORKER_ARGUMENT};
 use project::{Project, ProjectEntryId, ProjectPath};
 use settings::Settings as _;
-use ui::{Tooltip, prelude::*};
+use ui::{Tooltip, WithScrollbar, prelude::*};
 use util::ResultExt as _;
 #[cfg(not(test))]
 use util::command::{Stdio, new_command};
