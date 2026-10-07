@@ -368,11 +368,17 @@ impl WindowsWindowInner {
     fn handle_mouse_move_msg(&self, handle: HWND, lparam: LPARAM, wparam: WPARAM) -> Option<isize> {
         self.start_tracking_mouse(handle, TME_LEAVE);
         self.restore_cursor_after_hide();
+        let scale_factor = self.state.scale_factor.get();
+        let position = logical_point(
+            lparam.signed_loword() as f32,
+            lparam.signed_hiword() as f32,
+            scale_factor,
+        );
+        self.state.cursor_position.update(position);
 
         let Some(mut func) = self.state.callbacks.input.take() else {
             return Some(1);
         };
-        let scale_factor = self.state.scale_factor.get();
 
         let pressed_button = match MODIFIERKEYS_FLAGS(wparam.loword() as u32) {
             flags if flags.contains(MK_LBUTTON) => Some(MouseButton::Left),
@@ -386,10 +392,8 @@ impl WindowsWindowInner {
             }
             _ => None,
         };
-        let x = lparam.signed_loword() as f32;
-        let y = lparam.signed_hiword() as f32;
         let input = PlatformInput::MouseMove(MouseMoveEvent {
-            position: logical_point(x, y, scale_factor),
+            position,
             pressed_button,
             modifiers: current_modifiers(),
         });

@@ -2,7 +2,7 @@ name: PDF viewer fork checks
 
 on:
   push:
-    branches: [feature/pdf-viewer, feature/pdf-remote-packaging, feature/pdf-remote-files, main]
+    branches: [feature/pdf-viewer, feature/pdf-remote-packaging, feature/pdf-remote-files, feature/binary-viewer, main]
   pull_request:
     branches: [main]
   workflow_dispatch:
@@ -38,7 +38,7 @@ jobs:
           key: pdf-viewer-${{ runner.os }}-rust-1.98.1-${{ hashFiles('Cargo.lock') }}
           restore-keys: pdf-viewer-${{ runner.os }}-rust-1.98.1-
       - name: Check Rust formatting
-        run: cargo fmt -p pdf_renderer -p pdf_viewer -p zed -p remote -p remote_server -p project -p worktree -- --check
+        run: cargo fmt -p pdf_renderer -p pdf_viewer -p zed -p remote -p remote_server -p project -p worktree -p workspace -p proto -p binary_viewer -p gpui_windows -- --check
       - name: Test the renderer and worker protocol
         run: cargo test --locked -p pdf_renderer
       - name: Build the renderer worker probe
@@ -130,6 +130,14 @@ jobs:
         run: cargo check --locked -p pdf_viewer
       - name: Run PDF viewer GPUI tests
         run: cargo test --locked -p pdf_viewer
+      - name: Run read-only binary viewer GPUI tests
+        run: cargo test --locked -p binary_viewer
+      - name: Test bounded file ranges and cancellation capacity
+        run: cargo test --locked -p worktree --lib file_range_tests
+      - name: Test SSH binary ranges, viewer navigation and disconnect cleanup
+        run: cargo test --locked -p remote_server --lib test_remote_binary
+      - name: Test the Windows cursor query fallback
+        run: cargo test --locked -p gpui_windows --features test-support cursor_position_tests
       - name: Test Windows bundled-server upload paths and identity checks
         run: cargo test --locked -p remote --features bundled-remote-server transport::bundled_server::tests
       - name: Test bounded in-memory file transfers
@@ -164,6 +172,7 @@ jobs:
           Copy-Item -LiteralPath LICENSE-GPL -Destination pdf-zed-windows
           Copy-Item -LiteralPath assets/licenses.md -Destination pdf-zed-windows
           Copy-Item -LiteralPath docs/src/pdf-viewer.md -Destination pdf-zed-windows
+          Copy-Item -LiteralPath docs/src/binary-viewer.md -Destination pdf-zed-windows
           git rev-parse HEAD | Set-Content -Path pdf-zed-windows/commit.txt
           Get-FileHash -Algorithm SHA256 pdf-zed-windows/zed.exe | Format-List | Out-File pdf-zed-windows/sha256.txt
       - uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a

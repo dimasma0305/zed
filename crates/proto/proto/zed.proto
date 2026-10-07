@@ -524,7 +524,9 @@ message Envelope {
     ExecuteLspCommandResponse execute_lsp_command_response = 492;
     RefreshDocumentHighlights refresh_document_highlights = 493;
     GetTerminalShell get_terminal_shell = 494;
-    GetTerminalShellResponse get_terminal_shell_response = 495; // current max
+    GetTerminalShellResponse get_terminal_shell_response = 495;
+    ReadFileRange read_file_range = 496;
+    ReadFileRangeResponse read_file_range_response = 497; // current max
   }
 
   reserved 87 to 88;
@@ -587,6 +589,7 @@ enum ErrorCode {
   RemoteUpgradeRequired = 17;
   RateLimitExceeded = 18;
   CommitFailed = 19;
+  BinaryFile = 20;
   reserved 6;
   reserved 14 to 15;
 }

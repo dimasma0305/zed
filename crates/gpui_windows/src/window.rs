@@ -32,6 +32,89 @@ use crate::direct_manipulation::DirectManipulationHandler;
 use crate::*;
 use gpui::*;
 
+#[derive(Default)]
+pub(crate) struct CursorPosition {
+    last_position: Cell<Point<Pixels>>,
+    query_failed: Cell<bool>,
+}
+
+impl CursorPosition {
+    pub(crate) fn update(&self, position: Point<Pixels>) {
+        self.last_position.set(position);
+    }
+
+    fn resolve(&self, query: Result<Point<Pixels>>) -> Point<Pixels> {
+        match query {
+            Ok(position) => {
+                self.update(position);
+                self.query_failed.set(false);
+                position
+            }
+            Err(error) => {
+                if !self.query_failed.replace(true) {
+                    log::warn!(
+                        "Cursor position query failed; using the last mouse event position: {error:#}"
+                    );
+                }
+                self.last_position.get()
+            }
+        }
+    }
+}
+
+pub(crate) fn client_mouse_position(
+    window: HWND,
+    scale_factor: f32,
+    cached: &CursorPosition,
+) -> Point<Pixels> {
+    let query = (|| {
+        let mut position = POINT::default();
+        unsafe {
+            GetCursorPos(&mut position).context("unable to get cursor position")?;
+            ScreenToClient(window, &mut position)
+                .ok()
+                .context("unable to convert cursor position")?;
+        }
+        Ok(logical_point(
+            position.x as f32,
+            position.y as f32,
+            scale_factor,
+        ))
+    })();
+    // Windows can deny cursor queries on a disconnected or locked input desktop.
+    // A mouse event already carries client coordinates and needs no desktop access.
+    cached.resolve(query)
+}
+
+#[cfg(test)]
+mod cursor_position_tests {
+    use super::CursorPosition;
+    use gpui::{Point, point, px};
+
+    #[test]
+    fn denied_queries_preserve_event_positions_and_recover() {
+        let position = CursorPosition::default();
+        assert_eq!(
+            position.resolve(Err(anyhow::anyhow!("access denied"))),
+            Point::default()
+        );
+        position.update(point(px(123.0), px(45.0)));
+        assert_eq!(
+            position.resolve(Err(anyhow::anyhow!("access denied"))),
+            point(px(123.0), px(45.0))
+        );
+        assert_eq!(
+            position.resolve(Ok(point(px(50.0), px(60.0)))),
+            point(px(50.0), px(60.0))
+        );
+        assert!(!position.query_failed.get());
+        assert_eq!(
+            position.resolve(Err(anyhow::anyhow!("conversion failed"))),
+            point(px(50.0), px(60.0))
+        );
+    }
+}
+
 pub(crate) struct WindowsWindow(pub Rc<WindowsWindowInner>);
 
 impl std::ops::Deref for WindowsWindow {
@@ -78,6 +161,7 @@ pub struct WindowsWindowState {
     pub current_cursor: Cell<Option<HCURSOR>>,
     /// Shared with [`WindowsPlatformState::cursor_visible`].
     pub cursor_visible: Arc<AtomicBool>,
+    pub(crate) cursor_position: Rc<CursorPosition>,
     pub nc_button_pressed: Cell<Option<u32>>,
 
     pub display: Cell<WindowsDisplay>,
@@ -155,8 +239,10 @@ impl WindowsWindowState {
         let fullscreen = None;
         let initial_placement = None;
 
-        let direct_manipulation = DirectManipulationHandler::new(hwnd, scale_factor)
-            .context("initializing Direct Manipulation")?;
+        let cursor_position = Rc::new(CursorPosition::default());
+        let direct_manipulation =
+            DirectManipulationHandler::new(hwnd, scale_factor, cursor_position.clone())
+                .context("initializing Direct Manipulation")?;
 
         Ok(Self {
             origin: Cell::new(origin),
@@ -182,6 +268,7 @@ impl WindowsWindowState {
             click_state,
             current_cursor: Cell::new(current_cursor),
             cursor_visible,
+            cursor_position,
             nc_button_pressed: Cell::new(nc_button_pressed),
             display: Cell::new(display),
             fullscreen: Cell::new(fullscreen),
@@ -689,16 +776,11 @@ impl PlatformWindow for WindowsWindow {
     }
 
     fn mouse_position(&self) -> Point<Pixels> {
-        let scale_factor = self.scale_factor();
-        let point = unsafe {
-            let mut point: POINT = std::mem::zeroed();
-            GetCursorPos(&mut point)
-                .context("unable to get cursor position")
-                .log_err();
-            ScreenToClient(self.0.hwnd, &mut point).ok().log_err();
-            point
-        };
-        logical_point(point.x as f32, point.y as f32, scale_factor)
+        client_mouse_position(
+            self.0.hwnd,
+            self.scale_factor(),
+            &self.state.cursor_position,
+        )
     }
 
     fn modifiers(&self) -> Modifiers {

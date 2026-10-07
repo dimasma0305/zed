@@ -87,6 +87,8 @@ messages!(
     (RestoreProjectEntryResponse, Foreground),
     (DownloadFileByPath, Background),
     (DownloadFileResponse, Background),
+    (ReadFileRange, Background),
+    (ReadFileRangeResponse, Background),
     (EndStream, Foreground),
     (Error, Foreground),
     (ExpandProjectEntry, Foreground),
@@ -457,6 +459,7 @@ request_messages!(
     (TrashProjectEntry, TrashProjectEntryResponse),
     (RestoreProjectEntry, RestoreProjectEntryResponse),
     (DownloadFileByPath, DownloadFileResponse),
+    (ReadFileRange, ReadFileRangeResponse),
     (ExpandProjectEntry, ExpandProjectEntryResponse),
     (ExpandAllForProjectEntry, ExpandAllForProjectEntryResponse),
     (Follow, FollowResponse),
@@ -908,6 +911,7 @@ entity_messages!(
     FindSearchCandidatesChunk,
     FindSearchCandidatesCancelled,
     DownloadFileByPath,
+    ReadFileRange,
     GetRemoteProfilingData
 );
 

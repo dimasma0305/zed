@@ -713,6 +713,210 @@ async fn test_remote_pdf_view_navigation_reload_and_disconnect(
     );
 }
 
+#[gpui::test(iterations = 5)]
+async fn test_remote_binary_ranges_and_cancellation_capacity(
+    cx: &mut TestAppContext,
+    server_cx: &mut TestAppContext,
+) {
+    let (fs, project, path) = remote_pdf_project(cx, server_cx).await;
+    let bytes = (0..320_000)
+        .map(|index| (index % 251) as u8)
+        .collect::<Vec<_>>();
+    fs.insert_file(path!("/code/pdf-test/sample.bin"), bytes.clone())
+        .await;
+    let path = ProjectPath {
+        path: rel_path("sample.bin").into(),
+        ..path
+    };
+    let first = project.update(cx, |project, cx| {
+        project.read_file_range(path.clone(), 65_536, 65_536, cx)
+    });
+    let second = project.update(cx, |project, cx| {
+        project.read_file_range(path.clone(), 262_144, 65_536, cx)
+    });
+    let (first, second) = futures::future::try_join(first, second).await.unwrap();
+    assert_eq!(first.offset, 65_536);
+    assert_eq!(first.file_size, bytes.len() as u64);
+    assert_eq!(first.data, bytes[65_536..131_072]);
+    assert_eq!(second.data, bytes[262_144..]);
+    let empty = project
+        .update(cx, |project, cx| {
+            project.read_file_range(path.clone(), bytes.len() as u64, 65_536, cx)
+        })
+        .await
+        .unwrap();
+    assert!(empty.data.is_empty());
+    let cancelled = (0..4)
+        .map(|_| {
+            project.update(cx, |project, cx| {
+                project.read_file_range(path.clone(), 0, 65_536, cx)
+            })
+        })
+        .collect::<Vec<_>>();
+    assert!(
+        project
+            .update(cx, |project, cx| project.read_file_range(
+                path.clone(),
+                0,
+                65_536,
+                cx
+            ))
+            .await
+            .unwrap_err()
+            .to_string()
+            .contains("Too many")
+    );
+    drop(cancelled);
+    let retry = project
+        .update(cx, |project, cx| project.read_file_range(path, 16, 32, cx))
+        .await
+        .unwrap();
+    assert_eq!(retry.data, bytes[16..48]);
+}
+
+#[gpui::test(iterations = 5)]
+async fn test_remote_binary_server_bounds_containment_and_errors(
+    cx: &mut TestAppContext,
+    server_cx: &mut TestAppContext,
+) {
+    let (fs, project, path) = remote_pdf_project(cx, server_cx).await;
+    for (offset, length) in [
+        (0, 0),
+        (0, worktree::MAX_FILE_RANGE_BYTES + 1),
+        (u64::MAX, 1),
+        (PDF_FIXTURE.len() as u64 + 1, 1),
+    ] {
+        let client = project.read_with(cx, |project, cx| {
+            project.remote_client().unwrap().read(cx).proto_client()
+        });
+        let result = client
+            .request(proto::ReadFileRange {
+                project_id: proto::REMOTE_SERVER_PROJECT_ID,
+                worktree_id: path.worktree_id.to_proto(),
+                path: path.path.as_unix_str().into(),
+                offset,
+                length,
+            })
+            .await;
+        assert!(
+            result.is_err(),
+            "server must reject invalid ranges independent of client validation"
+        );
+    }
+    fs.insert_file(path!("/code/outside.bin"), vec![1, 2, 3])
+        .await;
+    fs.insert_symlink(
+        path!("/code/pdf-test/outside.bin"),
+        PathBuf::from(path!("/code/outside.bin")),
+    )
+    .await;
+    for relative in ["missing.bin", "folder", "outside.bin"] {
+        let path = ProjectPath {
+            path: rel_path(relative).into(),
+            ..path.clone()
+        };
+        assert!(
+            project
+                .update(cx, |project, cx| project
+                    .read_file_range(path, 0, 65_536, cx))
+                .await
+                .is_err()
+        );
+    }
+}
+
+#[gpui::test]
+async fn test_remote_binary_view_navigation_reload_reconnect_and_disconnect(
+    cx: &mut TestAppContext,
+    server_cx: &mut TestAppContext,
+) {
+    use binary_viewer::{BinaryDocument, BinaryView};
+    use gpui::Focusable as _;
+    use workspace::item::{Item as _, ProjectItem as _};
+
+    let (fs, project, path) = remote_pdf_project(cx, server_cx).await;
+    fs.insert_file(path!("/code/pdf-test/sample.bin"), vec![65; 131_089])
+        .await;
+    let path = ProjectPath {
+        path: rel_path("sample.bin").into(),
+        ..path
+    };
+    cx.update(|cx| theme_settings::init(theme::LoadThemes::JustBase, cx));
+    let document = cx
+        .update(|cx| <BinaryDocument as project::ProjectItem>::try_open(&project, &path, cx))
+        .unwrap()
+        .await
+        .unwrap();
+    let remote = project.read_with(cx, |project, _| project.remote_client().unwrap());
+    let (view, visual_cx) = cx.add_window_view(|window, cx| {
+        BinaryView::for_project_item(project.clone(), None, document, window, cx)
+    });
+    visual_cx.run_until_parked();
+    view.read_with(visual_cx, |view, cx| {
+        let state = view.test_state(cx);
+        assert_eq!(state.file_size, Some(131_089));
+        assert_eq!(state.byte_count, 65_536);
+        assert!(state.error.is_none() && !state.loading);
+        assert!(!view.can_save(cx) && !view.can_save_as(cx));
+    });
+    view.update_in(visual_cx, |view, window, cx| {
+        view.focus_handle(cx).focus(window, cx)
+    });
+    visual_cx.update(|window, cx| {
+        window.refresh();
+        window.draw(cx).clear(cx);
+    });
+    visual_cx.dispatch_action(binary_viewer::LastPage);
+    visual_cx.run_until_parked();
+    assert_eq!(
+        view.read_with(visual_cx, |view, cx| view.test_state(cx).byte_count),
+        17
+    );
+    fs.insert_file(path!("/code/pdf-test/sample.bin"), vec![66; 131_089])
+        .await;
+    visual_cx.dispatch_action(binary_viewer::Reload);
+    visual_cx.run_until_parked();
+    assert!(view.read_with(visual_cx, |view, cx| {
+        view.test_state(cx).text.unwrap().contains("42 42")
+    }));
+
+    let reconnected = Arc::new(AtomicBool::new(false));
+    let _subscription = visual_cx.update(|_, cx| {
+        let reconnected = reconnected.clone();
+        cx.subscribe(&remote, move |_, event, _| {
+            if matches!(event, RemoteClientEvent::Reconnected) {
+                reconnected.store(true, Ordering::SeqCst);
+            }
+        })
+    });
+    remote
+        .update(visual_cx, |remote, cx| remote.simulate_disconnect(cx))
+        .detach();
+    visual_cx.run_until_parked();
+    assert!(reconnected.load(Ordering::SeqCst));
+    view.read_with(visual_cx, |view, cx| {
+        let state = view.test_state(cx);
+        assert_eq!(state.byte_count, 0);
+        assert!(state.text.is_none() && state.error.is_some());
+    });
+    visual_cx.dispatch_action(binary_viewer::Reload);
+    visual_cx.run_until_parked();
+    assert!(view.read_with(visual_cx, |view, cx| view.test_state(cx).error.is_none()));
+    remote.update(visual_cx, |remote, cx| remote.force_server_not_running(cx));
+    visual_cx.run_until_parked();
+    view.read_with(visual_cx, |view, cx| {
+        let state = view.test_state(cx);
+        assert_eq!(state.byte_count, 0);
+        assert!(
+            state.text.is_none()
+                && state
+                    .error
+                    .as_deref()
+                    .is_some_and(|error| error.contains("disconnected"))
+        );
+    });
+}
+
 impl gpui::Render for RemoteImageTestView {
     fn render(
         &mut self,

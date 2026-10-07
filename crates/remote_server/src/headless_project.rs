@@ -65,6 +65,7 @@ pub struct HeadlessProject {
     pub context_server_store: Entity<ContextServerStore>,
     pub settings_observer: Entity<SettingsObserver>,
     pub next_entry_id: Arc<AtomicUsize>,
+    file_range_limiter: worktree::FileRangeLimiter,
     pub languages: Arc<LanguageRegistry>,
     pub extensions: Entity<HeadlessExtensionStore>,
     pub git_store: Entity<GitStore>,
@@ -313,6 +314,7 @@ impl HeadlessProject {
         session.add_entity_request_handler(Self::handle_trust_worktrees);
         session.add_entity_request_handler(Self::handle_restrict_worktrees);
         session.add_entity_request_handler(Self::handle_download_file_by_path);
+        session.add_entity_request_handler(Self::handle_read_file_range);
 
         session.add_entity_message_handler(Self::handle_find_search_candidates_cancel);
         session.add_entity_request_handler(BufferStore::handle_update_buffer);
@@ -345,6 +347,7 @@ impl HeadlessProject {
 
         HeadlessProject {
             next_entry_id: Default::default(),
+            file_range_limiter: Default::default(),
             session,
             settings_observer,
             fs,
@@ -777,6 +780,42 @@ impl HeadlessProject {
             trusted_worktrees.restrict(worktree_store, restricted_paths, cx);
         });
         Ok(proto::Ack {})
+    }
+
+    pub async fn handle_read_file_range(
+        this: Entity<Self>,
+        message: TypedEnvelope<proto::ReadFileRange>,
+        mut cx: AsyncApp,
+    ) -> Result<proto::ReadFileRangeResponse> {
+        let request = message.payload;
+        anyhow::ensure!(
+            request.project_id == REMOTE_SERVER_PROJECT_ID,
+            "File range project is unavailable"
+        );
+        worktree::validate_file_range(request.offset, request.length)?;
+        let path = RelPath::from_unix_str(&request.path)?;
+        let (worktree_store, guard) = this.read_with(&cx, |this, _| {
+            Ok::<_, anyhow::Error>((
+                this.worktree_store.clone(),
+                this.file_range_limiter.acquire()?,
+            ))
+        })?;
+        let _guard = guard;
+        let worktree = worktree_store
+            .read_with(&cx, |store, cx| {
+                store.worktree_for_id(WorktreeId::from_proto(request.worktree_id), cx)
+            })
+            .context("File worktree is unavailable")?;
+        let range = worktree
+            .update(&mut cx, |worktree, cx| {
+                worktree.read_file_range(path, request.offset, request.length, cx)
+            })
+            .await?;
+        Ok(proto::ReadFileRangeResponse {
+            offset: range.offset,
+            file_size: range.file_size,
+            data: range.data,
+        })
     }
 
     pub async fn handle_download_file_by_path(

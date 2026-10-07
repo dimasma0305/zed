@@ -46,7 +46,7 @@ use postage::{
     watch,
 };
 use rpc::{
-    AnyProtoClient,
+    AnyProtoClient, ErrorCodeExt as _,
     proto::{self, split_worktree_update},
 };
 pub use settings::WorktreeId;
@@ -61,7 +61,7 @@ use std::{
     ffi::OsStr,
     fmt,
     future::Future,
-    io::Read,
+    io::{Read, Seek, SeekFrom},
     mem::{self},
     ops::{Bound, Deref, DerefMut, Range},
     path::{Path, PathBuf},
@@ -84,6 +84,159 @@ pub use worktree_settings::WorktreeSettings;
 pub const FS_WATCH_LATENCY: Duration = Duration::from_millis(100);
 /// Maximum in-memory read for read-only binary viewers.
 pub const MAX_BINARY_FILE_BYTES: u64 = 128 * 1024 * 1024;
+pub const MAX_FILE_RANGE_BYTES: u64 = 256 * 1024;
+
+pub struct FileRange {
+    pub offset: u64,
+    pub file_size: u64,
+    pub data: Vec<u8>,
+}
+
+impl fmt::Debug for FileRange {
+    fn fmt(&self, formatter: &mut fmt::Formatter<'_>) -> fmt::Result {
+        formatter
+            .debug_struct("FileRange")
+            .field("offset", &self.offset)
+            .field("file_size", &self.file_size)
+            .field("data_length", &self.data.len())
+            .finish()
+    }
+}
+
+#[derive(Clone, Default)]
+pub struct FileRangeLimiter(Arc<AtomicUsize>);
+
+impl FileRangeLimiter {
+    pub fn acquire(&self) -> Result<FileRangeGuard> {
+        self.0
+            .fetch_update(SeqCst, SeqCst, |count| (count < 4).then_some(count + 1))
+            .map_err(|_| {
+                anyhow!("Too many file reads are in progress. Retry when another finishes")
+            })?;
+        Ok(FileRangeGuard(self.0.clone()))
+    }
+}
+
+pub struct FileRangeGuard(Arc<AtomicUsize>);
+
+impl Drop for FileRangeGuard {
+    fn drop(&mut self) {
+        self.0.fetch_sub(1, SeqCst);
+    }
+}
+
+#[cfg(test)]
+mod file_range_tests {
+    use super::*;
+
+    struct SparseReader {
+        position: u64,
+        size: u64,
+        bytes_read: usize,
+    }
+
+    impl Read for SparseReader {
+        fn read(&mut self, buffer: &mut [u8]) -> std::io::Result<usize> {
+            let length = buffer.len().min((self.size - self.position) as usize);
+            for (index, byte) in buffer.iter_mut().take(length).enumerate() {
+                *byte = ((self.position + index as u64) % 251) as u8;
+            }
+            self.position += length as u64;
+            self.bytes_read += length;
+            Ok(length)
+        }
+    }
+
+    impl Seek for SparseReader {
+        fn seek(&mut self, offset: SeekFrom) -> std::io::Result<u64> {
+            if let SeekFrom::Start(position) = offset {
+                self.position = position;
+                Ok(position)
+            } else {
+                Err(std::io::Error::other("only absolute seeks are expected"))
+            }
+        }
+    }
+
+    #[test]
+    fn reads_a_page_beyond_six_gib_without_reading_the_prefix() {
+        let offset = 6 * 1024 * 1024 * 1024 + 123;
+        let mut reader = SparseReader {
+            position: 0,
+            size: offset + 100_000,
+            bytes_read: 0,
+        };
+        let range = read_range(&mut reader, offset + 100_000, offset, 65536).unwrap();
+        assert_eq!(range.offset, offset);
+        assert_eq!(range.data.len(), 65536);
+        assert_eq!(reader.bytes_read, 65536);
+        assert_eq!(range.data[0], (offset % 251) as u8);
+    }
+
+    #[test]
+    fn validates_ranges_and_detects_short_reads() {
+        let mut reader = std::io::Cursor::new(vec![1, 2, 3]);
+        assert_eq!(read_range(&mut reader, 3, 2, 16).unwrap().data, vec![3]);
+        assert!(read_range(&mut reader, 3, 3, 16).unwrap().data.is_empty());
+        for (offset, length) in [(4, 1), (0, 0), (0, MAX_FILE_RANGE_BYTES + 1), (u64::MAX, 1)] {
+            assert!(read_range(&mut reader, 3, offset, length).is_err());
+        }
+        assert!(
+            read_range(&mut reader, 10, 0, 10)
+                .unwrap_err()
+                .to_string()
+                .contains("changed")
+        );
+    }
+
+    #[test]
+    fn dropping_a_range_guard_releases_capacity() {
+        let limiter = FileRangeLimiter::default();
+        let guards = (0..4)
+            .map(|_| limiter.acquire().unwrap())
+            .collect::<Vec<_>>();
+        assert!(limiter.acquire().is_err());
+        drop(guards);
+        assert!(limiter.acquire().is_ok());
+    }
+}
+
+pub fn validate_file_range(offset: u64, length: u64) -> Result<()> {
+    anyhow::ensure!(
+        (1..=MAX_FILE_RANGE_BYTES).contains(&length),
+        "File range must be between 1 and 262144 bytes"
+    );
+    offset
+        .checked_add(length)
+        .context("File range offset overflows")?;
+    Ok(())
+}
+
+fn read_range(
+    reader: &mut (impl Read + Seek + ?Sized),
+    file_size: u64,
+    offset: u64,
+    length: u64,
+) -> Result<FileRange> {
+    validate_file_range(offset, length)?;
+    anyhow::ensure!(
+        offset <= file_size,
+        "Offset is past the end of the file. Reload to check its size"
+    );
+    let expected_length = length.min(file_size - offset);
+    reader.seek(SeekFrom::Start(offset))?;
+    let mut data = Vec::with_capacity(expected_length as usize);
+    reader.take(expected_length).read_to_end(&mut data)?;
+    anyhow::ensure!(
+        data.len() as u64 == expected_length,
+        "File changed while reading. Reload and retry"
+    );
+    Ok(FileRange {
+        offset,
+        file_size,
+        data,
+    })
+}
 
 /// How often the background scanner verifies that the worktree root still
 /// exists at its recorded path. Native watchers report the root itself being
@@ -958,6 +1111,55 @@ impl Worktree {
         }
     }
 
+    pub fn read_file_range(
+        &self,
+        path: &RelPath,
+        offset: u64,
+        length: u64,
+        cx: &Context<Worktree>,
+    ) -> Task<Result<FileRange>> {
+        let Worktree::Local(worktree) = self else {
+            return Task::ready(Err(anyhow!(
+                "Remote file ranges require the project transport"
+            )));
+        };
+        if let Err(error) = validate_file_range(offset, length) {
+            return Task::ready(Err(error));
+        }
+        let absolute_path = worktree.absolutize(path);
+        let root_path = worktree.snapshot.abs_path().clone();
+        let fs = worktree.fs.clone();
+        cx.background_spawn(async move {
+            let root_path = fs.canonicalize(&root_path).await?;
+            let canonical_path = fs.canonicalize(&absolute_path).await?;
+            anyhow::ensure!(
+                canonical_path.starts_with(&root_path),
+                "Binary file is outside its worktree"
+            );
+            let metadata = fs
+                .metadata(&canonical_path)
+                .await?
+                .context("File was deleted")?;
+            anyhow::ensure!(
+                !metadata.is_dir && !metadata.is_fifo,
+                "Binary path is not a regular file"
+            );
+            let mut reader = fs.open_sync(&canonical_path).await?;
+            let range = read_range(&mut *reader, metadata.len, offset, length)?;
+            let after = fs
+                .metadata(&canonical_path)
+                .await?
+                .context("File was deleted while reading")?;
+            anyhow::ensure!(
+                metadata.inode == after.inode
+                    && metadata.len == after.len
+                    && metadata.mtime == after.mtime,
+                "File changed while reading. Reload and retry"
+            );
+            Ok(range)
+        })
+    }
+
     pub fn write_file(
         &self,
         path: Arc<RelPath>,
@@ -1782,7 +1984,9 @@ impl LocalWorktree {
             if let Some(metadata) = metadata.as_ref()
                 && metadata.len >= FILE_SIZE_MAX
             {
-                anyhow::bail!("File is too large to load");
+                return Err(rpc::ErrorCode::BinaryFile
+                    .message("File is too large to load as editable text".into())
+                    .into());
             }
             let (text, line_ending, encoding, has_bom) =
                 decode_file_text_to_rope(fs.as_ref(), &abs_path).await?;
@@ -7337,10 +7541,11 @@ pub async fn decode_file_text_to_rope(
     let (prefix, reached_eof) = read_byte_header(&mut *file)
         .with_context(|| format!("reading bytes of the file {abs_path:?}"))?;
     let (bom_encoding, byte_content) = decode_byte_header(&prefix);
-    anyhow::ensure!(
-        byte_content != ByteContent::Binary,
-        "Binary files are not supported"
-    );
+    if byte_content == ByteContent::Binary {
+        return Err(rpc::ErrorCode::BinaryFile
+            .message("Open this file in the read-only binary viewer".into())
+            .into());
+    }
 
     if bom_encoding.is_none()
         && byte_content == ByteContent::Unknown

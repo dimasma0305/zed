@@ -6,7 +6,7 @@ use gpui::*;
 use gpui_util::ResultExt;
 use windows::Win32::{
     Foundation::*,
-    Graphics::{DirectManipulation::*, Gdi::*},
+    Graphics::DirectManipulation::*,
     System::Com::*,
     UI::{Input::Pointer::*, WindowsAndMessaging::*},
 };
@@ -29,7 +29,11 @@ pub(crate) struct DirectManipulationHandler {
 }
 
 impl DirectManipulationHandler {
-    pub fn new(window: HWND, scale_factor: f32) -> Result<Self> {
+    pub fn new(
+        window: HWND,
+        scale_factor: f32,
+        cursor_position: Rc<CursorPosition>,
+    ) -> Result<Self> {
         unsafe {
             let manager: IDirectManipulationManager =
                 CoCreateInstance(&DirectManipulationManager, None, CLSCTX_INPROC_SERVER)?;
@@ -71,6 +75,7 @@ impl DirectManipulationHandler {
                     window,
                     Rc::clone(&scale_factor),
                     Rc::clone(&pending_events),
+                    cursor_position,
                 )
                 .into();
 
@@ -143,6 +148,7 @@ struct DirectManipulationEventHandler {
     last_y_offset: Cell<f32>,
     scroll_phase: Cell<TouchPhase>,
     pending_events: Rc<RefCell<Vec<PlatformInput>>>,
+    cursor_position: Rc<CursorPosition>,
 }
 
 impl DirectManipulationEventHandler {
@@ -150,6 +156,7 @@ impl DirectManipulationEventHandler {
         window: HWND,
         scale_factor: Rc<Cell<f32>>,
         pending_events: Rc<RefCell<Vec<PlatformInput>>>,
+        cursor_position: Rc<CursorPosition>,
     ) -> Self {
         Self {
             window,
@@ -160,6 +167,7 @@ impl DirectManipulationEventHandler {
             last_y_offset: Cell::new(0.0),
             scroll_phase: Cell::new(TouchPhase::Started),
             pending_events,
+            cursor_position,
         }
     }
 
@@ -193,13 +201,7 @@ impl DirectManipulationEventHandler {
     }
 
     fn mouse_position(&self) -> Point<Pixels> {
-        let scale_factor = self.scale_factor.get();
-        unsafe {
-            let mut point: POINT = std::mem::zeroed();
-            let _ = GetCursorPos(&mut point);
-            let _ = ScreenToClient(self.window, &mut point);
-            logical_point(point.x as f32, point.y as f32, scale_factor)
-        }
+        client_mouse_position(self.window, self.scale_factor.get(), &self.cursor_position)
     }
 }
 

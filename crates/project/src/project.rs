@@ -256,6 +256,7 @@ pub struct Project {
     agent_location: Option<AgentLocation>,
     downloading_files: Arc<Mutex<HashMap<(WorktreeId, String), DownloadingFile>>>,
     pending_file_reads: bounded_file::PendingReads,
+    file_range_limiter: worktree::FileRangeLimiter,
     last_worktree_paths: WorktreePaths,
 }
 
@@ -1420,6 +1421,7 @@ impl Project {
                 agent_location: None,
                 downloading_files: Default::default(),
                 pending_file_reads: Default::default(),
+                file_range_limiter: Default::default(),
                 last_worktree_paths: WorktreePaths::default(),
             }
         })
@@ -1664,6 +1666,7 @@ impl Project {
                 agent_location: None,
                 downloading_files: Default::default(),
                 pending_file_reads: Default::default(),
+                file_range_limiter: Default::default(),
                 last_worktree_paths: WorktreePaths::default(),
             };
 
@@ -1956,6 +1959,7 @@ impl Project {
                 agent_location: None,
                 downloading_files: Default::default(),
                 pending_file_reads: Default::default(),
+                file_range_limiter: Default::default(),
                 last_worktree_paths: WorktreePaths::default(),
             };
             project.set_role(role, cx);
@@ -3348,6 +3352,61 @@ impl Project {
             };
             let (_, bytes) = futures::future::try_join(response, received).await?;
             Ok(bytes)
+        })
+    }
+
+    pub fn read_file_range(
+        &mut self,
+        path: ProjectPath,
+        offset: u64,
+        length: u64,
+        cx: &mut Context<Self>,
+    ) -> Task<Result<worktree::FileRange>> {
+        if self.is_disconnected(cx)
+            || self
+                .remote_connection_state(cx)
+                .is_some_and(|state| state != remote::ConnectionState::Connected)
+        {
+            return Task::ready(Err(anyhow!(
+                "Remote project is disconnected. Reconnect and retry"
+            )));
+        }
+        if let Err(error) = worktree::validate_file_range(offset, length) {
+            return Task::ready(Err(error));
+        }
+        let Some(worktree) = self.worktree_for_id(path.worktree_id, cx) else {
+            return Task::ready(Err(anyhow!("File worktree is unavailable")));
+        };
+        let guard = match self.file_range_limiter.acquire() {
+            Ok(guard) => guard,
+            Err(error) => return Task::ready(Err(error)),
+        };
+        if worktree.read(cx).is_local() {
+            let read = worktree.update(cx, |worktree, cx| {
+                worktree.read_file_range(&path.path, offset, length, cx)
+            });
+            return cx.background_spawn(async move {
+                let _guard = guard;
+                read.await
+            });
+        }
+        let Some(remote) = &self.remote_client else {
+            return Task::ready(Err(anyhow!(
+                "Binary viewing requires a local or SSH project"
+            )));
+        };
+        let client = remote.read(cx).proto_client();
+        let request = proto::ReadFileRange {
+            project_id: self.remote_id().unwrap_or(REMOTE_SERVER_PROJECT_ID),
+            worktree_id: path.worktree_id.to_proto(),
+            path: path.path.as_unix_str().to_owned(),
+            offset,
+            length,
+        };
+        cx.spawn(async move |_, _| {
+            let _guard = guard;
+            let response = client.request(request).await?;
+            bounded_file::validate_range(response, offset, length)
         })
     }
 

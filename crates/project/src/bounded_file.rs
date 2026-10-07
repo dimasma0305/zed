@@ -128,12 +128,64 @@ pub(super) fn next_id() -> u64 {
     NEXT_FILE_ID.fetch_add(1, Ordering::Relaxed)
 }
 
+pub(super) fn validate_range(
+    response: proto::ReadFileRangeResponse,
+    offset: u64,
+    length: u64,
+) -> Result<worktree::FileRange> {
+    worktree::validate_file_range(offset, length)?;
+    let available = response
+        .file_size
+        .checked_sub(offset)
+        .ok_or_else(|| anyhow!("Remote file has an invalid size"))?;
+    ensure!(
+        response.offset == offset && response.data.len() as u64 == length.min(available),
+        "Remote file response does not match the requested range"
+    );
+    Ok(worktree::FileRange {
+        offset,
+        file_size: response.file_size,
+        data: response.data,
+    })
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
     use crate::WorktreeId;
     use proto::create_file_for_peer::Variant;
     use util::rel_path::rel_path;
+
+    #[test]
+    fn file_range_rejects_mismatched_offsets_and_lengths() {
+        let response = |offset, file_size, length| proto::ReadFileRangeResponse {
+            offset,
+            file_size,
+            data: vec![65; length],
+        };
+        assert_eq!(
+            validate_range(response(7, 10, 3), 7, 65536)
+                .unwrap()
+                .data
+                .len(),
+            3
+        );
+        assert!(
+            validate_range(response(10, 10, 0), 10, 65536)
+                .unwrap()
+                .data
+                .is_empty()
+        );
+        for invalid in [
+            response(8, 10, 3),
+            response(7, 6, 0),
+            response(7, 10, 4),
+            response(7, 10, 2),
+        ] {
+            assert!(validate_range(invalid, 7, 65536).is_err());
+        }
+        assert!(validate_range(response(0, 1_000_000, 65537), 0, 65536).is_err());
+    }
 
     fn setup(limit: u64) -> (PendingReads, oneshot::Receiver<Result<Vec<u8>>>) {
         let (tx, rx) = oneshot::channel();

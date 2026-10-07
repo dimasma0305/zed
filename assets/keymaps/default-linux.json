@@ -1702,4 +1702,33 @@
       "right": ["tabular_data::MoveFocusedCell", { "direction": "right" }],
     },
   },
+  {
+    "context": "BinaryViewer",
+    "bindings": {
+      "alt-pageup": "binary_viewer::PreviousPage",
+      "alt-pagedown": "binary_viewer::NextPage",
+      "alt-home": "binary_viewer::FirstPage",
+      "alt-end": "binary_viewer::LastPage",
+      "ctrl-g": "binary_viewer::GoToOffset",
+      "ctrl-r": "binary_viewer::Reload",
+    },
+  },
+  {
+    "context": "BinaryViewer > Editor",
+    "bindings": {
+      "alt-pageup": "binary_viewer::PreviousPage",
+      "alt-pagedown": "binary_viewer::NextPage",
+      "alt-home": "binary_viewer::FirstPage",
+      "alt-end": "binary_viewer::LastPage",
+      "ctrl-g": "binary_viewer::GoToOffset",
+      "ctrl-r": "binary_viewer::Reload",
+    },
+  },
+  {
+    "context": "BinaryViewer > BinaryOffsetInput > Editor",
+    "bindings": {
+      "enter": "menu::Confirm",
+      "escape": "menu::Cancel",
+    },
+  },
 ]

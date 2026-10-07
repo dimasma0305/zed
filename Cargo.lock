@@ -2195,6 +2195,31 @@ dependencies = [
 ]
 
 [[package]]
+name = "binary_viewer"
+version = "0.1.0"
+dependencies = [
+ "anyhow",
+ "db",
+ "editor",
+ "encoding_rs",
+ "file_icons",
+ "fs",
+ "futures 0.3.34",
+ "gpui",
+ "language",
+ "menu",
+ "project",
+ "remote",
+ "settings",
+ "theme",
+ "theme_settings",
+ "ui",
+ "util",
+ "workspace",
+ "worktree",
+]
+
+[[package]]
 name = "bincode"
 version = "1.3.3"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -15274,6 +15299,7 @@ dependencies = [
  "anyhow",
  "askpass",
  "async-channel 2.5.0",
+ "binary_viewer",
  "clap",
  "client",
  "clock",
@@ -22729,6 +22755,7 @@ dependencies = [
  "audio",
  "auto_update",
  "auto_update_ui",
+ "binary_viewer",
  "breadcrumbs",
  "call",
  "call_hierarchy",

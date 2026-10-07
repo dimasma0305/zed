@@ -1050,10 +1050,11 @@ type BuildProjectItemForPathFn =
 struct ProjectItemRegistry {
     build_project_item_fns_by_type: TypeIdHashMap<BuildProjectItemFn>,
     build_project_item_for_path_fns: Vec<BuildProjectItemForPathFn>,
+    binary_fallback: Option<BuildProjectItemForPathFn>,
 }
 
 impl ProjectItemRegistry {
-    fn register<T: ProjectItem>(&mut self) {
+    fn register<T: ProjectItem>(&mut self, binary_fallback: bool) {
         self.build_project_item_fns_by_type.insert(
             TypeId::of::<T::Item>(),
             |item, project, pane, window, cx| {
@@ -1062,19 +1063,18 @@ impl ProjectItemRegistry {
                     as Box<dyn ItemHandle>
             },
         );
-        self.build_project_item_for_path_fns
-            .push(|project, project_path, window, cx| {
-                let project_path = project_path.clone();
-                let is_file = project
-                    .read(cx)
-                    .entry_for_path(&project_path, cx)
-                    .is_some_and(|entry| entry.is_file());
-                let entry_abs_path = project.read(cx).absolute_path(&project_path, cx);
-                let is_local = project.read(cx).is_local();
-                let project_item =
-                    <T::Item as project::ProjectItem>::try_open(project, &project_path, cx)?;
-                let project = project.clone();
-                Some(window.spawn(cx, async move |cx| {
+        let open: BuildProjectItemForPathFn = |project, project_path, window, cx| {
+            let project_path = project_path.clone();
+            let is_file = project
+                .read(cx)
+                .entry_for_path(&project_path, cx)
+                .is_some_and(|entry| entry.is_file());
+            let entry_abs_path = project.read(cx).absolute_path(&project_path, cx);
+            let is_local = project.read(cx).is_local();
+            let project_item =
+                <T::Item as project::ProjectItem>::try_open(project, &project_path, cx)?;
+            let project = project.clone();
+            Some(window.spawn(cx, async move |cx| {
                     match project_item.await.with_context(|| {
                         format!(
                             "opening project path {:?}",
@@ -1101,7 +1101,9 @@ impl ProjectItemRegistry {
                             Ok((project_entry_id, build_workspace_item))
                         }
                         Err(e) => {
-                            log::warn!("Failed to open a project item: {e:#}");
+                            if e.error_code() != ErrorCode::BinaryFile {
+                                log::warn!("Failed to open a project item: {e:#}");
+                            }
                             if e.error_code() == ErrorCode::Internal {
                                 if let Some(abs_path) =
                                     entry_abs_path.as_deref().filter(|_| is_file)
@@ -1127,7 +1129,12 @@ impl ProjectItemRegistry {
                         }
                     }
                 }))
-            });
+        };
+        if binary_fallback {
+            self.binary_fallback = Some(open);
+        } else {
+            self.build_project_item_for_path_fns.push(open);
+        }
     }
 
     fn open_path(
@@ -1145,7 +1152,19 @@ impl ProjectItemRegistry {
         else {
             return Task::ready(Err(anyhow!("cannot open file {:?}", path.path)));
         };
-        open_project_item
+        let fallback = self.binary_fallback;
+        let project = project.clone();
+        let path = path.clone();
+        window.spawn(cx, async move |cx| match open_project_item.await {
+            Err(error) if error.error_code() == ErrorCode::BinaryFile => {
+                let fallback = fallback.context("Binary viewer is unavailable")?;
+                let task = cx
+                    .update(|window, cx| fallback(&project, &path, window, cx))?
+                    .context("Binary viewer cannot open this file")?;
+                task.await
+            }
+            result => result,
+        })
     }
 
     fn build_item<T: project::ProjectItem>(
@@ -1172,7 +1191,13 @@ impl Global for ProjectItemRegistry {}
 /// items will get a chance to open the file, starting from the project item that
 /// was added last.
 pub fn register_project_item<I: ProjectItem>(cx: &mut App) {
-    cx.default_global::<ProjectItemRegistry>().register::<I>();
+    cx.default_global::<ProjectItemRegistry>()
+        .register::<I>(false);
+}
+
+pub fn register_binary_project_item<I: ProjectItem>(cx: &mut App) {
+    cx.default_global::<ProjectItemRegistry>()
+        .register::<I>(true);
 }
 
 #[derive(Default)]
