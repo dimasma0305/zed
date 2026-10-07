@@ -135,9 +135,21 @@ fn bounded_scale(width: f32, height: f32, requested: f32) -> Result<f32> {
         width.is_finite() && height.is_finite() && width > 0.0 && height > 0.0,
         "PDF page has invalid dimensions"
     );
-    let scale = requested
+    let mut scale = requested
         .min(MAX_DIMENSION / width.max(height))
         .min((MAX_PIXELS as f64 / (width as f64 * height as f64)).sqrt() as f32);
+    let bitmap_width = (width * scale).ceil();
+    let bitmap_height = (height * scale).ceil();
+    if bitmap_width > MAX_DIMENSION
+        || bitmap_height > MAX_DIMENSION
+        || bitmap_width as f64 * bitmap_height as f64 > MAX_PIXELS as f64
+    {
+        // Rounding both dimensions up can exceed an otherwise exact area bound.
+        scale = scale.min((MAX_DIMENSION - 1.0) / width.max(height)).min(
+            ((MAX_PIXELS as f64 - 2.0 * MAX_DIMENSION as f64) / (width as f64 * height as f64))
+                .sqrt() as f32,
+        );
+    }
     ensure!(
         scale.is_finite() && width * scale >= 1.0 && height * scale >= 1.0,
         "PDF page dimensions cannot be rendered within the bitmap limit"
@@ -247,6 +259,11 @@ mod tests {
         assert!(bounded_scale(0.0, 300.0, 1.0).is_err());
         let scale = bounded_scale(100_000.0, 100_000.0, 8.0).expect("bounded scale");
         assert!((100_000.0 * scale).powi(2) <= MAX_PIXELS as f32);
+        let scale = bounded_scale(123_456.0, 78_901.0, 8.0).expect("rounded dimensions");
+        assert!(
+            (123_456.0 * scale).ceil() as f64 * (78_901.0 * scale).ceil() as f64
+                <= MAX_PIXELS as f64
+        );
         let mut request = request_header(0, 1.0, 0).expect("request");
         request[16..24].copy_from_slice(&u64::MAX.to_le_bytes());
         assert!(run_worker(request.as_slice(), Vec::new()).is_err());
