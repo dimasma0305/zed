@@ -57,7 +57,9 @@ mode always shows the original bytes.
 ## Local and SSH projects
 
 SSH pages use the project's existing authenticated connection and matching
-fork remote server. Reconnect the project, then choose **Reload** after a
+fork remote server. Bundled builds cache servers by the full client source
+commit so an older fork with the same Zed version cannot be reused. Reconnect
+the project, then choose **Reload** after a
 disconnect. Displayed page bytes are cleared when the connection is lost.
 Collaborative projects without an SSH connection are not supported.
 

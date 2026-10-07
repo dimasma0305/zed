@@ -228,6 +228,7 @@ impl DockerExecConnection {
             release_channel.dev_name(),
             version_str
         );
+        let binary_name = super::server_binary_name(binary_name, cx)?;
         let dst_path =
             paths::remote_server_dir_relative().join(RelPath::from_unix_str(&binary_name).unwrap());
 

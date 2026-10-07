@@ -239,6 +239,18 @@ fn handle_rpc_messages_over_child_process_stdio(
     })
 }
 
+fn server_binary_name(binary_name: String, cx: &mut AsyncApp) -> Result<String> {
+    if cfg!(feature = "bundled-remote-server") {
+        let commit = cx
+            .update(|cx| release_channel::AppCommitSha::try_global(cx))
+            .context("Client source commit is unavailable for remote server selection")?
+            .full();
+        // Fork builds share an upstream version while requiring different RPC handlers.
+        return bundled_server::source_binary_name(&binary_name, &commit);
+    }
+    Ok(binary_name)
+}
+
 async fn prepare_local_remote_server(
     platform: &crate::RemotePlatform,
     delegate: &dyn crate::RemoteClientDelegate,

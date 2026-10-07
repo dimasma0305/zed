@@ -13,6 +13,17 @@ use std::{
 const MAX_MANIFEST_BYTES: u64 = 64 * 1024;
 const MAX_ARCHIVE_BYTES: u64 = 256 * 1024 * 1024;
 
+pub(super) fn source_binary_name(binary_name: &str, commit: &str) -> Result<String> {
+    ensure!(
+        commit.len() == 40 && commit.bytes().all(|byte| byte.is_ascii_hexdigit()),
+        "Remote server source commit is invalid"
+    );
+    let (name, suffix) = binary_name
+        .strip_suffix(".exe")
+        .map_or((binary_name, ""), |name| (name, ".exe"));
+    Ok(format!("{name}-{commit}{suffix}"))
+}
+
 #[derive(Deserialize)]
 struct Manifest {
     format_version: u32,
@@ -153,6 +164,30 @@ mod tests {
     use serde_json::json;
 
     const COMMIT: &str = "1234567890abcdef1234567890abcdef12345678";
+
+    #[test]
+    fn server_cache_separates_same_version_builds_by_source() {
+        let existing = "zed-remote-server-stable-1.24.0";
+        let current = source_binary_name(existing, COMMIT).unwrap();
+        let next =
+            source_binary_name(existing, "abcdef1234567890abcdef1234567890abcdef12").unwrap();
+        assert_eq!(current, format!("{existing}-{COMMIT}"));
+        assert_ne!(current, existing);
+        assert_ne!(current, next);
+        assert_eq!(current, source_binary_name(existing, COMMIT).unwrap());
+        assert_eq!(
+            source_binary_name(&format!("{existing}.exe"), COMMIT).unwrap(),
+            format!("{existing}-{COMMIT}.exe")
+        );
+        for invalid in [
+            "",
+            "short",
+            "../../../../../../../../../../../../file",
+            "g234567890abcdef1234567890abcdef12345678",
+        ] {
+            assert!(source_binary_name(existing, invalid).is_err());
+        }
+    }
 
     fn fixture() -> (tempfile::TempDir, serde_json::Value) {
         let temporary_directory = tempfile::tempdir().unwrap();
