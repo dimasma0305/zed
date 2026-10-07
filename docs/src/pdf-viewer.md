@@ -91,6 +91,8 @@ and run `zed.exe`. This is an unsigned development build with fonts, keymaps,
 and other assets embedded using Zed's `util/debug-embed` feature. The Windows
 renderer uses Zed's release shader compilation path through a package-specific
 Cargo profile override, so it does not need the build machine's source files.
+The application uses Zed's normal Windows GUI entry point, without opening a
+development console window.
 Its commit and executable checksum are included. Use current Windows graphics
 drivers; see the Windows build guide for graphics troubleshooting.
 
@@ -101,7 +103,7 @@ the dependency license notices with `script/generate-licenses.ps1`, then run:
 $env:ZED_RELEASE_CHANNEL = "stable"
 $env:RELEASE_CHANNEL = "stable"
 $env:ZED_UPDATE_EXPLANATION = "Download updates from https://github.com/dimasma0305/zed/releases."
-cargo --config 'profile.dev.package.gpui_windows.debug-assertions=false' build --locked -p zed -p cli --bin zed --bin cli --features util/debug-embed
+cargo --config 'profile.dev.package.gpui_windows.debug-assertions=false' --config 'profile.dev.package.zed.debug-assertions=false' build --locked -p zed -p cli --bin zed --bin cli --features util/debug-embed
 ```
 
 The Windows package uses Zed's stable settings and workspace database. Upstream
