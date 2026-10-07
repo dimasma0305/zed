@@ -15304,6 +15304,7 @@ dependencies = [
  "net",
  "node_runtime",
  "paths",
+ "pdf_viewer",
  "pretty_assertions",
  "project",
  "proto",

@@ -12,6 +12,9 @@ workspace = true
 path = "src/pdf_viewer.rs"
 doctest = false
 
+[features]
+test-support = []
+
 [dependencies]
 anyhow.workspace = true
 db.workspace = true

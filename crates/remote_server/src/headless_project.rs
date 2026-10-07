@@ -793,6 +793,7 @@ impl HeadlessProject {
         let path = RelPath::from_unix_str(&message.payload.path)?;
         let project_id = message.payload.project_id;
         let file_id = message.payload.file_id;
+        let max_size = message.payload.max_size;
         log::debug!(
             "handle_download_file_by_path: worktree_id={:?}, path={:?}, file_id={}",
             worktree_id,
@@ -811,7 +812,11 @@ impl HeadlessProject {
             .context("worktree not found")?;
 
         let download_task = worktree.update(&mut cx, |worktree: &mut Worktree, cx| {
-            worktree.load_binary_file(path.as_ref(), cx)
+            if let Some(max_size) = max_size {
+                worktree.load_binary_file_with_limit(path.as_ref(), max_size, cx)
+            } else {
+                worktree.load_binary_file(path.as_ref(), cx)
+            }
         });
 
         let downloaded_file = download_task.await?;

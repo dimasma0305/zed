@@ -9,6 +9,8 @@ message DownloadFileByPath {
   uint64 worktree_id = 2;
   string path = 3;
   uint64 file_id = 4;
+  // Optional bound for read-only viewers. Checked before reading or sending bytes.
+  optional uint64 max_size = 5;
 }
 
 message DownloadFileResponse {

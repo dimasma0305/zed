@@ -447,6 +447,241 @@ struct RemoteImageTestView {
     source: ImageSource,
 }
 
+const PDF_FIXTURE: &[u8] = include_bytes!("../../pdf_renderer/tests/fixtures/two-pages.pdf");
+
+async fn remote_pdf_project(
+    cx: &mut TestAppContext,
+    server_cx: &mut TestAppContext,
+) -> (Arc<FakeFs>, Entity<Project>, ProjectPath) {
+    let fs = FakeFs::new(server_cx.executor());
+    fs.insert_tree(path!("/code/pdf-test"), json!({ "folder": {} }))
+        .await;
+    fs.insert_file(path!("/code/pdf-test/safe.pdf"), PDF_FIXTURE.to_vec())
+        .await;
+    let (project, _headless) = init_test(&fs, cx, server_cx).await;
+    let (worktree, _) = project
+        .update(cx, |project, cx| {
+            project.find_or_create_worktree(path!("/code/pdf-test"), true, cx)
+        })
+        .await
+        .expect("remote fixture worktree");
+    let path = ProjectPath {
+        worktree_id: worktree.read_with(cx, |worktree, _| worktree.id()),
+        path: rel_path("safe.pdf").into(),
+    };
+    (fs, project, path)
+}
+
+#[gpui::test(iterations = 5)]
+async fn test_remote_pdf_bounded_transfer_and_concurrent_reads(
+    cx: &mut TestAppContext,
+    server_cx: &mut TestAppContext,
+) {
+    let (fs, project, path) = remote_pdf_project(cx, server_cx).await;
+    let first = project.update(cx, |project, cx| {
+        project.read_file_bytes(path.clone(), PDF_FIXTURE.len() as u64, cx)
+    });
+    let second = project.update(cx, |project, cx| {
+        project.read_file_bytes(path.clone(), PDF_FIXTURE.len() as u64, cx)
+    });
+    let (first, second) = futures::future::try_join(first, second)
+        .await
+        .expect("independent reads of the same file");
+    assert_eq!(first, PDF_FIXTURE);
+    assert_eq!(second, PDF_FIXTURE);
+    fs.insert_file(
+        path!("/code/pdf-test/report space λ.PDF"),
+        PDF_FIXTURE.to_vec(),
+    )
+    .await;
+    let unicode_path = ProjectPath {
+        path: rel_path("report space λ.PDF").into(),
+        ..path.clone()
+    };
+    let unicode_bytes = project
+        .update(cx, |project, cx| {
+            project.read_file_bytes(unicode_path, PDF_FIXTURE.len() as u64, cx)
+        })
+        .await
+        .expect("spaces and Unicode use the project transport");
+    assert_eq!(unicode_bytes, PDF_FIXTURE);
+    assert_eq!(
+        project.read_with(cx, |project, _| project.pending_file_read_count()),
+        0
+    );
+
+    let cancelled = project.update(cx, |project, cx| {
+        project.read_file_bytes(path, 128 * 1024 * 1024, cx)
+    });
+    assert_eq!(
+        project.read_with(cx, |project, _| project.pending_file_read_count()),
+        1
+    );
+    drop(cancelled);
+    cx.run_until_parked();
+    assert_eq!(
+        project.read_with(cx, |project, _| project.pending_file_read_count()),
+        0
+    );
+}
+
+#[gpui::test(iterations = 5)]
+async fn test_remote_pdf_transfer_errors_and_cleanup(
+    cx: &mut TestAppContext,
+    server_cx: &mut TestAppContext,
+) {
+    let (fs, project, path) = remote_pdf_project(cx, server_cx).await;
+    let oversized = project
+        .update(cx, |project, cx| {
+            project.read_file_bytes(path.clone(), 4, cx)
+        })
+        .await
+        .expect_err("server must enforce the requested limit before transfer");
+    assert!(oversized.to_string().contains("limit"));
+    for relative in ["missing.pdf", "folder"] {
+        let path = ProjectPath {
+            path: rel_path(relative).into(),
+            ..path.clone()
+        };
+        assert!(
+            project
+                .update(cx, |project, cx| project.read_file_bytes(
+                    path,
+                    128 * 1024 * 1024,
+                    cx
+                ))
+                .await
+                .is_err()
+        );
+    }
+    fs.insert_file(path!("/code/outside.pdf"), PDF_FIXTURE.to_vec())
+        .await;
+    fs.insert_symlink(
+        path!("/code/pdf-test/outside.pdf"),
+        PathBuf::from(path!("/code/outside.pdf")),
+    )
+    .await;
+    let outside = ProjectPath {
+        path: rel_path("outside.pdf").into(),
+        ..path.clone()
+    };
+    let error = project
+        .update(cx, |project, cx| {
+            project.read_file_bytes(outside, 128 * 1024 * 1024, cx)
+        })
+        .await
+        .expect_err("symlink must remain within the worktree");
+    assert!(error.to_string().contains("outside"));
+    assert_eq!(
+        project.read_with(cx, |project, _| project.pending_file_read_count()),
+        0
+    );
+
+    let tasks = (0..4)
+        .map(|_| {
+            project.update(cx, |project, cx| {
+                project.read_file_bytes(path.clone(), 128 * 1024 * 1024, cx)
+            })
+        })
+        .collect::<Vec<_>>();
+    let limit = project
+        .update(cx, |project, cx| {
+            project.read_file_bytes(path.clone(), 128 * 1024 * 1024, cx)
+        })
+        .await
+        .expect_err("concurrent transfer limit");
+    assert!(limit.to_string().contains("Too many"));
+    drop(tasks);
+    cx.run_until_parked();
+    assert_eq!(
+        project.read_with(cx, |project, _| project.pending_file_read_count()),
+        0
+    );
+}
+
+#[gpui::test]
+async fn test_remote_pdf_view_navigation_reload_and_disconnect(
+    cx: &mut TestAppContext,
+    server_cx: &mut TestAppContext,
+) {
+    use gpui::Focusable as _;
+    use pdf_viewer::{PdfDocument, PdfView};
+    use workspace::item::{Item as _, ProjectItem as _};
+
+    let (fs, project, path) = remote_pdf_project(cx, server_cx).await;
+    cx.update(|cx| theme_settings::init(theme::LoadThemes::JustBase, cx));
+    let document = cx
+        .update(|cx| <PdfDocument as project::ProjectItem>::try_open(&project, &path, cx))
+        .expect("native PDF opener")
+        .await
+        .expect("PDF document");
+    let remote = project.read_with(cx, |project, _| {
+        project.remote_client().expect("existing transport")
+    });
+    let (view, visual_cx) = cx.add_window_view(|window, cx| {
+        PdfView::for_project_item(project.clone(), None, document, window, cx)
+    });
+    visual_cx.run_until_parked();
+    view.read_with(visual_cx, |view, cx| {
+        let state = view.test_state();
+        assert_eq!(state.page_count, 2);
+        assert!(state.has_image && state.has_bytes && state.error.is_none() && !state.loading);
+        assert!(!view.can_save(cx));
+    });
+    view.update_in(visual_cx, |view, window, cx| {
+        view.focus_handle(cx).focus(window, cx)
+    });
+    visual_cx.update(|window, cx| {
+        window.refresh();
+        window.draw(cx).clear(cx);
+    });
+    visual_cx.dispatch_action(pdf_viewer::NextPage);
+    visual_cx.dispatch_action(pdf_viewer::ResetZoom);
+    visual_cx.dispatch_action(pdf_viewer::ZoomIn);
+    visual_cx.run_until_parked();
+    let zoom = view.read_with(visual_cx, |view, _| view.test_state().zoom);
+    assert!(zoom > 1.0);
+    visual_cx.dispatch_action(pdf_viewer::Reload);
+    visual_cx.run_until_parked();
+    view.read_with(visual_cx, |view, _| {
+        let state = view.test_state();
+        assert_eq!(state.page_index, 1);
+        assert_eq!(state.zoom, zoom);
+        assert!(state.has_image && state.error.is_none());
+    });
+
+    fs.insert_file(
+        path!("/code/pdf-test/safe.pdf"),
+        b"%PDF-1.7 truncated".to_vec(),
+    )
+    .await;
+    visual_cx.dispatch_action(pdf_viewer::Reload);
+    visual_cx.run_until_parked();
+    assert!(view.read_with(visual_cx, |view, _| view.test_state().error.is_some()));
+    fs.insert_file(path!("/code/pdf-test/safe.pdf"), PDF_FIXTURE.to_vec())
+        .await;
+    visual_cx.dispatch_action(pdf_viewer::Reload);
+    visual_cx.run_until_parked();
+    assert!(view.read_with(visual_cx, |view, _| view.test_state().has_image));
+
+    remote.update(visual_cx, |remote, cx| remote.force_server_not_running(cx));
+    visual_cx.run_until_parked();
+    view.read_with(visual_cx, |view, _| {
+        let state = view.test_state();
+        assert!(!state.has_bytes && !state.has_image && !state.loading);
+        assert!(
+            state
+                .error
+                .as_deref()
+                .is_some_and(|error| error.contains("disconnected"))
+        );
+    });
+    assert_eq!(
+        project.read_with(visual_cx, |project, _| project.pending_file_read_count()),
+        0
+    );
+}
+
 impl gpui::Render for RemoteImageTestView {
     fn render(
         &mut self,

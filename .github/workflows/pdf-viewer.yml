@@ -2,7 +2,7 @@ name: PDF viewer fork checks
 
 on:
   push:
-    branches: [feature/pdf-viewer, feature/pdf-remote-packaging, main]
+    branches: [feature/pdf-viewer, feature/pdf-remote-packaging, feature/pdf-remote-files, main]
   pull_request:
     branches: [main]
   workflow_dispatch:
@@ -38,7 +38,7 @@ jobs:
           key: pdf-viewer-${{ runner.os }}-rust-1.98.1-${{ hashFiles('Cargo.lock') }}
           restore-keys: pdf-viewer-${{ runner.os }}-rust-1.98.1-
       - name: Check Rust formatting
-        run: cargo fmt -p pdf_renderer -p pdf_viewer -p zed -p remote -p remote_server -- --check
+        run: cargo fmt -p pdf_renderer -p pdf_viewer -p zed -p remote -p remote_server -p project -p worktree -- --check
       - name: Test the renderer and worker protocol
         run: cargo test --locked -p pdf_renderer
       - name: Build the renderer worker probe
@@ -132,6 +132,10 @@ jobs:
         run: cargo test --locked -p pdf_viewer
       - name: Test Windows bundled-server upload paths and identity checks
         run: cargo test --locked -p remote --features bundled-remote-server transport::bundled_server::tests
+      - name: Test bounded in-memory file transfers
+        run: cargo test --locked -p project bounded_file::tests
+      - name: Test SSH PDF transfer, viewer navigation, errors and cleanup
+        run: cargo test --locked -p remote_server test_remote_pdf
       - name: Check the Zed application
         run: cargo check --locked -p zed
       - name: Generate dependency license notices

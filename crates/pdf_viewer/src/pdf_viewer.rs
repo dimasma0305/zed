@@ -4,20 +4,20 @@ use anyhow::{Context as _, Result, ensure};
 use editor::Editor;
 use file_icons::FileIcons;
 use futures::future;
-#[cfg(not(test))]
+#[cfg(not(any(test, feature = "test-support")))]
 use futures::io::{AsyncReadExt as _, AsyncWriteExt as _};
 use gpui::{
     Entity, EventEmitter, FocusHandle, Focusable, Render, RenderImage, ScrollHandle, Size, Task,
     WeakEntity, actions, canvas, img, point, size,
 };
 use pdf_renderer::{MAX_FILE_BYTES, RenderedPage};
-#[cfg(not(test))]
+#[cfg(not(any(test, feature = "test-support")))]
 use pdf_renderer::{MAX_OUTPUT_BYTES, WORKER_ARGUMENT};
 use project::{Project, ProjectEntryId, ProjectPath};
 use settings::Settings as _;
 use ui::{Tooltip, WithScrollbar, prelude::*};
 use util::ResultExt as _;
-#[cfg(not(test))]
+#[cfg(not(any(test, feature = "test-support")))]
 use util::command::{Stdio, new_command};
 use workspace::{
     ItemId, ItemSettings, Pane, Workspace, WorkspaceId, delete_unloaded_items,
@@ -53,6 +53,7 @@ actions!(
 const MIN_ZOOM: f32 = 0.1;
 const MAX_ZOOM: f32 = 8.0;
 const RENDER_TIMEOUT: Duration = Duration::from_secs(30);
+const FILE_LOAD_TIMEOUT: Duration = Duration::from_secs(120);
 
 pub struct PdfDocument {
     path: ProjectPath,
@@ -147,6 +148,17 @@ pub enum PdfViewEvent {
     Navigated,
 }
 
+#[cfg(any(test, feature = "test-support"))]
+pub struct PdfViewTestState {
+    pub page_index: u32,
+    pub page_count: u32,
+    pub zoom: f32,
+    pub loading: bool,
+    pub error: Option<String>,
+    pub has_bytes: bool,
+    pub has_image: bool,
+}
+
 pub struct PdfView {
     document: Entity<PdfDocument>,
     project: Entity<Project>,
@@ -171,6 +183,18 @@ pub struct PdfView {
 }
 
 impl PdfView {
+    #[cfg(any(test, feature = "test-support"))]
+    pub fn test_state(&self) -> PdfViewTestState {
+        PdfViewTestState {
+            page_index: self.page_index,
+            page_count: self.page_count,
+            zoom: self.effective_zoom(),
+            loading: self.loading,
+            error: self.error.as_ref().map(ToString::to_string),
+            has_bytes: self.bytes.is_some(),
+            has_image: self.image.is_some(),
+        }
+    }
     fn new(
         document: Entity<PdfDocument>,
         project: Entity<Project>,
@@ -181,6 +205,25 @@ impl PdfView {
         cx.subscribe_in(&document, window, |this, _, _, window, cx| {
             this.load_document(window, cx);
             cx.emit(PdfViewEvent::TitleChanged);
+        })
+        .detach();
+        cx.subscribe_in(&project, window, |this, _, event, window, cx| {
+            if matches!(
+                event,
+                project::Event::DisconnectedFromRemote { .. }
+                    | project::Event::DisconnectedFromHost
+                    | project::Event::Closed
+            ) {
+                this.generation += 1;
+                this.load_task = None;
+                this.render_task = None;
+                this.bytes = None;
+                this.clear_image(window);
+                this.loading = false;
+                this.error =
+                    Some("Remote project is disconnected. Reconnect and reload the PDF".into());
+                cx.notify();
+            }
         })
         .detach();
         cx.on_release_in(window, |this, window, _| {
@@ -223,6 +266,8 @@ impl PdfView {
 
     fn load_document(&mut self, window: &mut Window, cx: &mut Context<Self>) {
         self.generation += 1;
+        let generation = self.generation;
+        self.load_task = None;
         self.render_task = None;
         self.bytes = None;
         self.loading = true;
@@ -233,37 +278,77 @@ impl PdfView {
         self.page_count = 0;
         let path = self.document.read(cx).path.clone();
         let project = self.project.clone();
+        let timeout = cx.background_executor().timer(FILE_LOAD_TIMEOUT);
         self.load_task = Some(cx.spawn_in(window, async move |this, cx| {
-            let result = async {
-                let (file_system, absolute_path, worktree) = project.read_with(cx, |project, cx| {
-                    Ok::<_, anyhow::Error>((
-                        project.fs().clone(),
-                        project.absolute_path(&path, cx).context("PDF path is unavailable")?,
-                        project.worktree_for_id(path.worktree_id, cx).context("PDF worktree is unavailable")?,
-                    ))
-                })?;
-                ensure!(worktree.read_with(cx, |worktree, _| worktree.is_local()),
-                    "PDF viewing currently supports local files. Download this PDF and open the local copy");
-                let metadata = file_system.metadata(&absolute_path).await?.context("PDF file was deleted")?;
-                ensure!(!metadata.is_dir && !metadata.is_fifo, "The selected PDF path is not a regular file");
-                ensure!(metadata.len <= MAX_FILE_BYTES as u64, "PDF exceeds the 128 MiB file limit");
+            let load = async {
+                let (file_system, absolute_path, worktree) =
+                    project.read_with(cx, |project, cx| {
+                        Ok::<_, anyhow::Error>((
+                            project.fs().clone(),
+                            project
+                                .absolute_path(&path, cx)
+                                .context("PDF path is unavailable")?,
+                            project
+                                .worktree_for_id(path.worktree_id, cx)
+                                .context("PDF worktree is unavailable")?,
+                        ))
+                    })?;
+                if !worktree.read_with(cx, |worktree, _| worktree.is_local()) {
+                    let bytes = project
+                        .update(cx, |project, cx| {
+                            project.read_file_bytes(path.clone(), MAX_FILE_BYTES as u64, cx)
+                        })
+                        .await?;
+                    return Ok(bytes);
+                }
+                let metadata = file_system
+                    .metadata(&absolute_path)
+                    .await?
+                    .context("PDF file was deleted")?;
+                ensure!(
+                    !metadata.is_dir && !metadata.is_fifo,
+                    "The selected PDF path is not a regular file"
+                );
+                ensure!(
+                    metadata.len <= MAX_FILE_BYTES as u64,
+                    "PDF exceeds the 128 MiB file limit"
+                );
                 let reader = file_system.open_sync(&absolute_path).await?;
-                cx.background_executor().spawn(async move { pdf_renderer::read_document(reader) }).await
-            }.await;
+                cx.background_executor()
+                    .spawn(async move { pdf_renderer::read_document(reader) })
+                    .await
+            };
+            let result = match future::select(Box::pin(load), Box::pin(timeout)).await {
+                future::Either::Left((result, _)) => result,
+                future::Either::Right(_) => Err(anyhow::anyhow!(
+                    "PDF loading exceeded 120 seconds. Check the connection and retry"
+                )),
+            };
             this.update_in(cx, |this, window, cx| {
+                if this.generation != generation {
+                    return;
+                }
                 match result {
                     Ok(bytes) => {
                         this.document.update(cx, |document, cx| {
-                            document.entry_id = this.project.read(cx).entry_for_path(&document.path, cx).map(|entry| entry.id);
+                            document.entry_id = this
+                                .project
+                                .read(cx)
+                                .entry_for_path(&document.path, cx)
+                                .map(|entry| entry.id);
                         });
                         this.bytes = Some(Arc::new(bytes));
                         this.request_render(window, cx);
                         cx.emit(PdfViewEvent::TitleChanged);
                     }
-                    Err(error) => { this.loading = false; this.error = Some(format!("{error:#}").into()); }
+                    Err(error) => {
+                        this.loading = false;
+                        this.error = Some(format!("{error:#}").into());
+                    }
                 }
                 cx.notify();
-            }).log_err();
+            })
+            .log_err();
         }));
         cx.notify();
     }
@@ -467,7 +552,7 @@ impl PdfView {
     }
 }
 
-#[cfg(not(test))]
+#[cfg(not(any(test, feature = "test-support")))]
 async fn render_in_worker(
     bytes: Arc<Vec<u8>>,
     page_index: u32,
@@ -533,7 +618,7 @@ async fn render_in_worker(
     pdf_renderer::read_response(&output)
 }
 
-#[cfg(test)]
+#[cfg(any(test, feature = "test-support"))]
 async fn render_in_worker(
     bytes: Arc<Vec<u8>>,
     page_index: u32,

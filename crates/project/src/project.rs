@@ -1,6 +1,7 @@
 pub mod agent_registry_store;
 pub mod agent_server_store;
 pub mod bookmark_store;
+mod bounded_file;
 pub mod buffer_store;
 pub mod color_extractor;
 pub mod connection_manager;
@@ -254,6 +255,7 @@ pub struct Project {
     toolchain_store: Option<Entity<ToolchainStore>>,
     agent_location: Option<AgentLocation>,
     downloading_files: Arc<Mutex<HashMap<(WorktreeId, String), DownloadingFile>>>,
+    pending_file_reads: bounded_file::PendingReads,
     last_worktree_paths: WorktreePaths,
 }
 
@@ -1417,6 +1419,7 @@ impl Project {
 
                 agent_location: None,
                 downloading_files: Default::default(),
+                pending_file_reads: Default::default(),
                 last_worktree_paths: WorktreePaths::default(),
             }
         })
@@ -1660,6 +1663,7 @@ impl Project {
                 toolchain_store: Some(toolchain_store),
                 agent_location: None,
                 downloading_files: Default::default(),
+                pending_file_reads: Default::default(),
                 last_worktree_paths: WorktreePaths::default(),
             };
 
@@ -1951,6 +1955,7 @@ impl Project {
                 toolchain_store: None,
                 agent_location: None,
                 downloading_files: Default::default(),
+                pending_file_reads: Default::default(),
                 last_worktree_paths: WorktreePaths::default(),
             };
             project.set_role(role, cx);
@@ -3232,8 +3237,7 @@ impl Project {
         let downloading_files = self.downloading_files.clone();
         let path_str = path.as_unix_str().to_owned();
 
-        static NEXT_FILE_ID: std::sync::atomic::AtomicU64 = std::sync::atomic::AtomicU64::new(1);
-        let file_id = NEXT_FILE_ID.fetch_add(1, std::sync::atomic::Ordering::SeqCst);
+        let file_id = bounded_file::next_id();
 
         // Register BEFORE sending request to avoid race condition
         let key = (worktree_id, path_str.clone());
@@ -3264,6 +3268,7 @@ impl Project {
                     worktree_id: worktree_id.to_proto(),
                     path: path_str.clone(),
                     file_id,
+                    max_size: None,
                 })
                 .await?;
 
@@ -3271,6 +3276,84 @@ impl Project {
             // The file_id is set from the State message, we just confirm the request succeeded
             Ok(())
         })
+    }
+
+    /// Reads bytes through the project's existing transport, without a disk cache.
+    /// Dropping the returned task releases partial received bytes.
+    pub fn read_file_bytes(
+        &mut self,
+        path: ProjectPath,
+        max_size: u64,
+        cx: &mut Context<Self>,
+    ) -> Task<Result<Vec<u8>>> {
+        if self.is_disconnected(cx) {
+            return Task::ready(Err(anyhow!(
+                "Remote project is disconnected. Reconnect and retry"
+            )));
+        }
+        if max_size > worktree::MAX_BINARY_FILE_BYTES {
+            return Task::ready(Err(anyhow!("File read limit exceeds 128 MiB")));
+        }
+        let Some(worktree) = self.worktree_for_id(path.worktree_id, cx) else {
+            return Task::ready(Err(anyhow!("File worktree is unavailable")));
+        };
+        if worktree.read(cx).is_local() {
+            let load = worktree.update(cx, |worktree, cx| {
+                worktree.load_binary_file_with_limit(&path.path, max_size, cx)
+            });
+            return cx.background_spawn(async move { Ok(load.await?.content) });
+        }
+        let Some(remote) = &self.remote_client else {
+            return Task::ready(Err(anyhow!(
+                "Binary viewing requires a local or SSH project"
+            )));
+        };
+        let client = remote.read(cx).proto_client();
+        let file_id = bounded_file::next_id();
+        let (completion, received) = futures::channel::oneshot::channel();
+        let request = proto::DownloadFileByPath {
+            project_id: self.remote_id().unwrap_or(REMOTE_SERVER_PROJECT_ID),
+            worktree_id: path.worktree_id.to_proto(),
+            path: path.path.as_unix_str().to_owned(),
+            file_id,
+            max_size: Some(max_size),
+        };
+        {
+            let mut reads = self.pending_file_reads.lock();
+            if reads.len() >= bounded_file::MAX_CONCURRENT_READS {
+                return Task::ready(Err(anyhow!(
+                    "Too many file reads are in progress. Retry when another finishes"
+                )));
+            }
+            reads.insert(
+                file_id,
+                bounded_file::PendingRead::new(path, max_size, completion),
+            );
+        }
+        let guard = bounded_file::ReadGuard::new(self.pending_file_reads.clone(), file_id);
+        cx.spawn(async move |_, _| {
+            let _guard = guard;
+            let response = async {
+                let response = client.request(request).await?;
+                anyhow::ensure!(
+                    response.file_id == file_id,
+                    "Remote file response has the wrong identifier"
+                );
+                Ok::<_, anyhow::Error>(())
+            };
+            let received = async {
+                received
+                    .await
+                    .context("Remote file transfer was interrupted. Reconnect and retry")?
+            };
+            let (_, bytes) = futures::future::try_join(response, received).await?;
+            Ok(bytes)
+        })
+    }
+
+    #[cfg(any(test, feature = "test-support"))]
+    pub fn pending_file_read_count(&self) -> usize {
+        self.pending_file_reads.lock().len()
     }
 
     #[ztracing::instrument(skip_all)]
@@ -3898,6 +3981,7 @@ impl Project {
     ) {
         match event {
             &remote::RemoteClientEvent::Disconnected { server_not_running } => {
+                self.pending_file_reads.lock().clear();
                 self.worktree_store.update(cx, |store, cx| {
                     store.disconnected_from_host(cx);
                 });
@@ -6211,6 +6295,12 @@ impl Project {
         mut cx: AsyncApp,
     ) -> Result<()> {
         use proto::create_file_for_peer::Variant;
+        if let Some(message) = &envelope.payload.variant {
+            let reads = this.read_with(&cx, |this, _| this.pending_file_reads.clone());
+            if bounded_file::receive(&reads, message) {
+                return Ok(());
+            }
+        }
         log::debug!("handle_create_file_for_peer: received message");
 
         let downloading_files: Arc<Mutex<HashMap<(WorktreeId, String), DownloadingFile>>> =
@@ -6238,7 +6328,10 @@ impl Project {
                             files.keys().collect::<Vec<_>>()
                         );
 
-                        if let Some(file_entry) = files.get_mut(&key) {
+                        if let Some(file_entry) = files
+                            .get_mut(&key)
+                            .filter(|entry| entry.file_id == Some(state.id))
+                        {
                             file_entry.total_size = state.content_size;
                             file_entry.file_id = Some(state.id);
                             log::debug!(
@@ -6253,7 +6346,11 @@ impl Project {
                             );
                         }
 
-                        if state.content_size == 0 {
+                        if state.content_size == 0
+                            && files
+                                .get(&key)
+                                .is_some_and(|entry| entry.file_id == Some(state.id))
+                        {
                             // No chunks will arrive for an empty file; write it now.
                             files.remove(&key).map(|entry| entry.destination_path)
                         } else {

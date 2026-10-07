@@ -1,11 +1,11 @@
 ---
 title: PDF Viewer
-description: Open local PDFs in Zed tabs and navigate their pages.
+description: Open local and SSH project PDFs in Zed tabs and navigate their pages.
 ---
 
 # PDF Viewer
 
-Open a local `.pdf` file from the Project Panel, the file finder, the file open
+Open a `.pdf` file from the Project Panel, the file finder, the file open
 dialog, or the command line. Zed displays it in a read-only tab. You can split
 the tab and view different pages side by side. Zed restores the file and page
 number when you reopen a project.
@@ -42,6 +42,23 @@ mouse wheel, or trackpad to move around the page.
 Changes on disk reload the PDF. The tab follows file renames in the project.
 You can also click **Reload** to retry after a loading or rendering error.
 
+## SSH projects
+
+Open a PDF in an already connected SSH project to view it in the same native
+tab. File bytes travel through Zed's existing authenticated project connection
+and are rendered on your computer. No additional login, public upload, or local
+download cache is used. Closing or reloading the tab releases a pending read's
+partial bytes; a disconnect releases the document and page image. Reconnect
+the project and click **Reload** to retry. Page and zoom remain selected when
+reloading a document.
+
+Both the server and client enforce the 128 MiB limit. At most four in-memory
+file transfers can run at once, and a PDF load times out after 120 seconds.
+Symlink targets must remain inside the remote worktree. This fork requires its
+matching remote server bundle; shared collaboration projects are not supported
+by the PDF byte transfer. A cancelled read can leave already queued bounded
+transport messages in flight, which the client discards.
+
 ## Supported files and limits
 
 The viewer uses [Hayro](https://github.com/LaurenzV/hayro), a PDF renderer in
@@ -49,8 +66,7 @@ Rust, on Windows, macOS, and Linux. It displays text, vector graphics, and
 embedded images, including cropped and rotated pages. Some PDF features and
 fonts have rendering limitations. Password-protected and encrypted documents
 are unsupported. The viewer does not yet offer text selection, search, form
-editing, printing, or annotations editing. Remote project files must be
-downloaded and opened locally.
+editing, printing, or annotations editing.
 
 Only the current page is rendered. Files are limited to 128 MiB and 10,000
 pages. Page bitmaps are limited to 16 megapixels and 8192 pixels per dimension;
@@ -73,11 +89,13 @@ The repository pins Rust 1.98.1. On Windows, the C++ build tools, Windows SDK
 26100, CMake, and Spectre-mitigated libraries listed in the Windows guide are
 required.
 
-From the `feature/pdf-viewer` branch:
+From this fork's `main` or `feature/pdf-remote-files` branch:
 
 ```sh
 cargo test --locked -p pdf_renderer
 cargo test --locked -p pdf_viewer
+cargo test --locked -p project bounded_file::tests
+cargo test --locked -p remote_server test_remote_pdf
 cargo run --locked -p zed -- crates/pdf_renderer/tests/fixtures/two-pages.pdf
 ```
 

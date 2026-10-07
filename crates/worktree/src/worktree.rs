@@ -82,6 +82,8 @@ use util::{
 pub use worktree_settings::WorktreeSettings;
 
 pub const FS_WATCH_LATENCY: Duration = Duration::from_millis(100);
+/// Maximum in-memory read for read-only binary viewers.
+pub const MAX_BINARY_FILE_BYTES: u64 = 128 * 1024 * 1024;
 
 /// How often the background scanner verifies that the worktree root still
 /// exists at its recorded path. Native watchers report the root itself being
@@ -942,6 +944,20 @@ impl Worktree {
         }
     }
 
+    pub fn load_binary_file_with_limit(
+        &self,
+        path: &RelPath,
+        max_size: u64,
+        cx: &Context<Worktree>,
+    ) -> Task<Result<LoadedBinaryFile>> {
+        match self {
+            Worktree::Local(this) => this.load_binary_file_inner(path, Some(max_size), cx),
+            Worktree::Remote(_) => Task::ready(Err(anyhow!(
+                "Remote binary reads require the project transport"
+            ))),
+        }
+    }
+
     pub fn write_file(
         &self,
         path: Arc<RelPath>,
@@ -1661,15 +1677,58 @@ impl LocalWorktree {
         path: &RelPath,
         cx: &Context<Worktree>,
     ) -> Task<Result<LoadedBinaryFile>> {
+        self.load_binary_file_inner(path, None, cx)
+    }
+
+    fn load_binary_file_inner(
+        &self,
+        path: &RelPath,
+        max_size: Option<u64>,
+        cx: &Context<Worktree>,
+    ) -> Task<Result<LoadedBinaryFile>> {
         let path = Arc::from(path);
         let abs_path = self.absolutize(&path);
+        let root_path = self.snapshot.abs_path().clone();
         let fs = self.fs.clone();
         let entry = self.refresh_entry(path.clone(), None, cx);
         let is_private = self.is_path_private(&path);
 
         let worktree = cx.weak_entity();
         cx.background_spawn(async move {
-            let content = fs.load_bytes(&abs_path).await?;
+            let content = if let Some(max_size) = max_size {
+                anyhow::ensure!(
+                    max_size <= MAX_BINARY_FILE_BYTES,
+                    "File read limit exceeds 128 MiB"
+                );
+                let root_path = fs.canonicalize(&root_path).await?;
+                let canonical_path = fs.canonicalize(&abs_path).await?;
+                anyhow::ensure!(
+                    canonical_path.starts_with(&root_path),
+                    "Binary file is outside its worktree"
+                );
+                let metadata = fs
+                    .metadata(&canonical_path)
+                    .await?
+                    .context("File was deleted")?;
+                anyhow::ensure!(
+                    !metadata.is_dir && !metadata.is_fifo,
+                    "Binary path is not a regular file"
+                );
+                anyhow::ensure!(
+                    metadata.len <= max_size,
+                    "File exceeds the {max_size} byte limit"
+                );
+                let reader = fs.open_sync(&canonical_path).await?;
+                let mut content = Vec::new();
+                reader.take(max_size + 1).read_to_end(&mut content)?;
+                anyhow::ensure!(
+                    content.len() as u64 <= max_size,
+                    "File exceeds the {max_size} byte limit"
+                );
+                content
+            } else {
+                fs.load_bytes(&abs_path).await?
+            };
 
             let worktree = worktree.upgrade().context("worktree was dropped")?;
             let file = match entry.await? {
