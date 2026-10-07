@@ -88,7 +88,7 @@ jobs:
           ZED_RELEASE_CHANNEL: stable
           RELEASE_CHANNEL: stable
           ZED_UPDATE_EXPLANATION: Download updates for this PDF viewer fork from https://github.com/dimasma0305/zed/releases. Upstream automatic updates are disabled for this build.
-        run: cargo build --locked -p zed -p cli --bin zed --bin cli --features util/debug-embed
+        run: cargo --config 'profile.dev.package.gpui_windows.debug-assertions=false' build --locked -p zed -p cli --bin zed --bin cli --features util/debug-embed
       - name: Check the PDF helper inside the Windows application
         run: python crates/pdf_renderer/tests/check_worker.py target/debug/zed.exe pdf-windows-qa
       - uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a
