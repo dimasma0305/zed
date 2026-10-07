@@ -91,6 +91,11 @@ and other assets embedded using Zed's `util/debug-embed` feature. Its commit
 and executable checksum are included. It requires Windows graphics drivers
 that support Vulkan, as described in the Windows build guide.
 
+The Windows package uses Zed's stable settings and workspace database. Upstream
+automatic updates are disabled through the build's `ZED_UPDATE_EXPLANATION`
+override. Download subsequent fork builds from the fork's GitHub Releases page.
+Back up an existing installation and its data before replacing its binaries.
+
 To keep its project state and extensions in a separate directory, run:
 
 ```powershell

@@ -84,6 +84,10 @@ jobs:
       - name: Generate dependency license notices
         run: ./script/generate-licenses.ps1
       - name: Build the Windows development application
+        env:
+          ZED_RELEASE_CHANNEL: stable
+          RELEASE_CHANNEL: stable
+          ZED_UPDATE_EXPLANATION: Download updates for this PDF viewer fork from https://github.com/dimasma0305/zed/releases. Upstream automatic updates are disabled for this build.
         run: cargo build --locked -p zed -p cli --bin zed --bin cli --features util/debug-embed
       - name: Check the PDF helper inside the Windows application
         run: python crates/pdf_renderer/tests/check_worker.py target/debug/zed.exe pdf-windows-qa
