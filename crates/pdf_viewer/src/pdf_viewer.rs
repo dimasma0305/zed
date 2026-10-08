@@ -1467,32 +1467,47 @@ mod tests {
             cx.simulate_resize(viewport);
             draw_window(cx);
             view.update(cx, |view, cx| {
-                view.scroll_handle.set_offset(point(px(-200.0), px(-300.0)));
+                let maximum = view.scroll_handle.max_offset();
+                view.scroll_handle
+                    .set_offset(point(-maximum.x / 2.0, -maximum.y / 2.0));
                 cx.notify();
             });
             draw_window(cx);
-            let bounds = view.read_with(cx, |view, _| view.viewport_bounds.expect("viewport"));
-            let vertical_track = point(bounds.right() - px(8.0), bounds.bottom() - px(40.0));
-            cx.simulate_mouse_move(vertical_track, None, Modifiers::default());
+            let (bounds, offset) = view.read_with(cx, |view, _| {
+                (
+                    view.viewport_bounds.expect("viewport"),
+                    view.scroll_handle.offset(),
+                )
+            });
+            // Overlay scrollbars accept drags on the thumb; their empty tracks
+            // deliberately let clicks through to the document.
+            let vertical_thumb = point(bounds.right() - px(8.0), bounds.center().y - px(4.0));
+            cx.simulate_mouse_move(vertical_thumb, None, Modifiers::default());
             draw_window(cx);
-            cx.simulate_click(vertical_track, Modifiers::default());
+            cx.simulate_mouse_down(vertical_thumb, MouseButton::Left, Modifiers::default());
+            let drag_end = vertical_thumb + point(px(0.0), px(60.0));
+            cx.simulate_mouse_move(drag_end, Some(MouseButton::Left), Modifiers::default());
+            cx.simulate_mouse_up(drag_end, MouseButton::Left, Modifiers::default());
             draw_window(cx);
             view.read_with(cx, |view, _| {
                 assert!(
-                    view.scroll_handle.offset().y < px(-300.0),
+                    view.scroll_handle.offset().y < offset.y,
                     "vertical scrollbar must remain at the viewport's right edge after panning"
                 );
-                assert_eq!(view.scroll_handle.offset().x, px(-200.0));
+                assert_eq!(view.scroll_handle.offset().x, offset.x);
                 assert!(view.last_mouse_position.is_none());
             });
-            let horizontal_track = point(bounds.right() - px(40.0), bounds.bottom() - px(8.0));
-            cx.simulate_mouse_move(horizontal_track, None, Modifiers::default());
+            let horizontal_thumb = point(bounds.center().x - px(4.0), bounds.bottom() - px(8.0));
+            cx.simulate_mouse_move(horizontal_thumb, None, Modifiers::default());
             draw_window(cx);
-            cx.simulate_click(horizontal_track, Modifiers::default());
+            cx.simulate_mouse_down(horizontal_thumb, MouseButton::Left, Modifiers::default());
+            let drag_end = horizontal_thumb + point(px(60.0), px(0.0));
+            cx.simulate_mouse_move(drag_end, Some(MouseButton::Left), Modifiers::default());
+            cx.simulate_mouse_up(drag_end, MouseButton::Left, Modifiers::default());
             draw_window(cx);
             view.read_with(cx, |view, _| {
                 assert!(
-                    view.scroll_handle.offset().x < px(-200.0),
+                    view.scroll_handle.offset().x < offset.x,
                     "horizontal scrollbar must remain at the viewport's bottom edge after panning"
                 );
                 assert!(view.last_mouse_position.is_none());
