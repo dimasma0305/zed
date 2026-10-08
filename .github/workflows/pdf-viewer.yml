@@ -9,6 +9,7 @@ on:
         feature/pdf-remote-files,
         feature/binary-viewer,
         feature/viewer-ui-hex-edit,
+        feature/cli-current-directory,
         main,
       ]
   pull_request:
@@ -46,7 +47,7 @@ jobs:
           key: pdf-viewer-${{ runner.os }}-rust-1.98.1-${{ hashFiles('Cargo.lock') }}
           restore-keys: pdf-viewer-${{ runner.os }}-rust-1.98.1-
       - name: Check Rust formatting
-        run: cargo fmt -p pdf_renderer -p pdf_viewer -p zed -p remote -p remote_server -p project -p worktree -p workspace -p proto -p binary_viewer -p gpui_windows -p fs -- --check
+        run: cargo fmt -p cli -p pdf_renderer -p pdf_viewer -p zed -p remote -p remote_server -p project -p worktree -p workspace -p proto -p binary_viewer -p gpui_windows -p fs -- --check
       - name: Test the renderer and worker protocol
         run: cargo test --locked -p pdf_renderer
       - name: Build the renderer worker probe
@@ -93,12 +94,16 @@ jobs:
             pdf-viewer-Linux-rust-1.98.1-
       - name: Set up upstream Linux build dependencies on the disposable runner
         run: ./script/linux
+      - name: Test remote terminal sockets and project updates
+        run: cargo --config 'profile.dev.debug=0' --config 'profile.test.debug=0' test --locked -p remote_server --lib terminal_cli -j2
       - name: Test Linux atomic byte saves and file metadata
         run: cargo test --locked -p fs binary_edits::tests
       - name: Test remote bundle source, version, protocol and platform selection
         run: cargo test --locked -p remote --features bundled-remote-server transport::bundled_server::tests
       - name: Build the matching Linux server with production assertions
         run: cargo --config 'profile.release-fast.debug="limited"' --config 'profile.release-fast.strip="debuginfo"' build --locked --profile release-fast -p remote_server --features remote_server/debug-embed
+      - name: Test the remote terminal launcher process
+        run: python3 script/check-remote-terminal-cli.py target/release-fast/remote_server
       - name: Validate runtime dependencies and exact server identity
         run: |
           ldd target/release-fast/remote_server | tee remote-server-dependencies.txt
@@ -138,6 +143,12 @@ jobs:
           restore-keys: pdf-viewer-${{ runner.os }}-rust-1.98.1-
       - name: Check PDF viewer integration
         run: cargo check --locked -p pdf_viewer
+      - name: Test current-folder CLI launch
+        run: cargo test --locked -p cli --bin cli -- --test-threads=1
+      - name: Test folders opened from remote terminals
+        run: cargo test --locked -p remote_server --lib test_terminal_cli
+      - name: Test remote terminal launcher environment
+        run: cargo test --locked -p project remote_cli_environment
       - name: Run PDF viewer GPUI tests
         run: cargo test --locked -p pdf_viewer
       - name: Run binary viewer and hex editor GPUI tests

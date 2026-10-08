@@ -69,6 +69,65 @@ use unindent::Unindent as _;
 use util::{path, path_list::PathList, paths::PathMatcher, rel_path::rel_path};
 
 #[gpui::test]
+async fn test_terminal_cli_adds_folders_to_connected_project(
+    cx: &mut TestAppContext,
+    server_cx: &mut TestAppContext,
+) {
+    let fs = FakeFs::new(server_cx.executor());
+    fs.insert_tree(
+        path!("/cli-folders"),
+        json!({
+            "first": {"one.txt": "one"},
+            "with spaces": {"two.txt": "two"},
+            "file.txt": "not a folder"
+        }),
+    )
+    .await;
+    let (project, headless) = init_test(&fs, cx, server_cx).await;
+    for paths in [
+        vec![path!("/cli-folders/first").to_string()],
+        vec![
+            path!("/cli-folders/first").to_string(),
+            path!("/cli-folders/with spaces").to_string(),
+        ],
+    ] {
+        HeadlessProject::open_terminal_folders(headless.clone(), paths, server_cx.to_async())
+            .await
+            .unwrap();
+        cx.run_until_parked();
+    }
+    project.read_with(cx, |project, cx| {
+        let paths = project
+            .visible_worktrees(cx)
+            .map(|worktree| worktree.read(cx).abs_path().to_path_buf())
+            .collect::<Vec<_>>();
+        assert_eq!(
+            paths,
+            vec![
+                PathBuf::from(path!("/cli-folders/first")),
+                PathBuf::from(path!("/cli-folders/with spaces"))
+            ]
+        );
+    });
+    for paths in [
+        vec![],
+        vec!["relative".into()],
+        vec![path!("/cli-folders/file.txt").into()],
+        vec![path!("/cli-folders/missing").into()],
+    ] {
+        assert!(
+            HeadlessProject::open_terminal_folders(headless.clone(), paths, server_cx.to_async())
+                .await
+                .is_err()
+        );
+    }
+    cx.run_until_parked();
+    project.read_with(cx, |project, cx| {
+        assert_eq!(project.visible_worktrees(cx).count(), 2)
+    });
+}
+
+#[gpui::test]
 async fn test_basic_remote_editing(cx: &mut TestAppContext, server_cx: &mut TestAppContext) {
     let fs = FakeFs::new(server_cx.executor());
     fs.insert_tree(

@@ -13,7 +13,7 @@ Use Zed's command-line interface (CLI) to open files and directories, integrate 
 
 **Linux:** The CLI is included with Zed packages. The binary name may vary by distribution (commonly `zed` or `zeditor`).
 
-**Windows:** The CLI is included with Zed. Add Zed's installation directory to your PATH, or use the full path to `zed.exe`.
+**Windows:** The CLI is included with Zed. Add the `bin` folder in Zed's installation directory to your PATH, or use the full path to `bin\zed.exe`.
 
 ## Usage
 
@@ -22,6 +22,17 @@ zed [OPTIONS] [PATHS]...
 ```
 
 ## Opening Files and Directories
+
+Open the terminal's current folder:
+
+```sh
+zed
+zed .
+```
+
+Both commands open the same folder. Explicit paths keep their usual meaning;
+quote paths that contain spaces. A diff-only invocation does not also open the
+current folder.
 
 Open a file:
 
@@ -41,12 +52,48 @@ Open multiple files or directories:
 zed file1.txt file2.txt ~/projects/myproject
 ```
 
+To add a folder to the current project, use `zed --add path/to/folder`. To open
+it in a new window, use `zed --new path/to/folder`. Without either flag, the
+`cli_default_open_behavior` setting controls where the project opens.
+
 Open a file at a specific line and column:
 
 ```sh
 zed myfile.txt:42        # Open at line 42
 zed myfile.txt:42:10     # Open at line 42, column 10
 ```
+
+## From a Zed SSH Terminal
+
+In a newly opened terminal in a connected Linux or macOS SSH project, `zed`
+adds the terminal's current folder to that project. You can also pass one or
+more existing folders:
+
+```sh
+zed
+zed .
+zed /root/things
+zed --add "/home/me/folder with spaces"
+```
+
+The folders appear in the connected project's Project Panel. Repeating a folder
+already covered by the project reuses it. This command opens folders only and
+always uses the connected project; `--new`, files, diffs, and `--wait` are not
+supported in the remote terminal launcher.
+
+Open a new terminal after updating Zed and reconnecting the SSH project. The
+launcher is available for that session; it does not change your shell profile
+or install a graphical application on the remote host. A shell profile that
+replaces `PATH` must preserve the inherited entries for the command to remain
+available. Terminals outside Zed's SSH connection do not receive this launcher.
+
+From your local terminal, you can open a remote project with:
+
+```sh
+zed "ssh://user@host/path/to/folder"
+```
+
+See [Remote Development](../remote-development.md) for SSH setup.
 
 ## Options
 

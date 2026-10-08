@@ -66,4 +66,7 @@ message GetTerminalShell {
 
 message GetTerminalShellResponse {
   Shell shell = 1;
+  optional string cli_directory = 2;
+  optional string cli_socket = 3;
+  optional string cli_fallback_path = 4;
 }

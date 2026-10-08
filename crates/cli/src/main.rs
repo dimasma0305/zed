@@ -55,7 +55,7 @@ This CLI is a separate binary that invokes Zed.
 
 Examples:
     `zed`
-          Simply opens Zed
+          Open the current folder in Zed
     `zed --foreground`
           Runs in foreground (shows all logs)
     `zed path-to-your-project`
@@ -153,6 +153,17 @@ struct Args {
     /// by having Zed act like netcat communicating over a Unix socket.
     #[arg(long, hide = true)]
     askpass: Option<String>,
+}
+
+impl Args {
+    fn paths_to_open(&self) -> impl Iterator<Item = &str> {
+        let current_directory =
+            (self.paths_with_position.is_empty() && self.diff.is_empty()).then_some(".");
+        self.paths_with_position
+            .iter()
+            .map(String::as_str)
+            .chain(current_directory)
+    }
 }
 
 /// Parses a path containing a position (e.g. `path:line:column`)
@@ -329,6 +340,38 @@ mod tests {
     }
 
     static CWD_LOCK: Mutex<()> = Mutex::new(());
+
+    #[test]
+    fn test_bare_invocation_opens_current_directory() {
+        let temp_tree = TempTree::new(json!({ "folder with spaces": {} }));
+        with_cwd(&temp_tree.path().join("folder with spaces"), || {
+            for arguments in [vec!["zed"], vec!["zed", "."], vec!["zed", "--add"]] {
+                let args = Args::try_parse_from(arguments)?;
+                let paths = args
+                    .paths_to_open()
+                    .map(parse_path_with_position)
+                    .collect::<Result<Vec<_>>>()?;
+                assert_eq!(paths, vec![parse_path_with_position(".")?]);
+            }
+            Ok(())
+        })
+        .unwrap();
+    }
+
+    #[test]
+    fn test_explicit_inputs_do_not_add_current_directory() {
+        for paths in [
+            vec!["folder with spaces", "another"],
+            vec!["-"],
+            vec!["ssh://user@host/root/things"],
+        ] {
+            let args =
+                Args::try_parse_from(std::iter::once("zed").chain(paths.iter().copied())).unwrap();
+            assert_eq!(args.paths_to_open().collect::<Vec<_>>(), paths);
+        }
+        let args = Args::try_parse_from(["zed", "--diff", "before", "after"]).unwrap();
+        assert_eq!(args.paths_to_open().count(), 0);
+    }
 
     fn with_cwd<T>(path: &Path, f: impl FnOnce() -> anyhow::Result<T>) -> anyhow::Result<T> {
         let _lock = CWD_LOCK.lock();
@@ -671,7 +714,7 @@ fn run() -> Result<()> {
     #[cfg(not(target_os = "windows"))]
     let wsl = None;
 
-    for path in args.paths_with_position.iter() {
+    for path in args.paths_to_open() {
         if URL_PREFIX.iter().any(|&prefix| path.starts_with(prefix)) {
             urls.push(path.to_string());
         } else if path == "-" && args.paths_with_position.len() == 1 {

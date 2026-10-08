@@ -66,6 +66,7 @@ shellexpand.workspace = true
 smol.workspace = true
 sysinfo.workspace = true
 task.workspace = true
+tempfile.workspace = true
 telemetry.workspace = true
 terminal.workspace = true
 util.workspace = true

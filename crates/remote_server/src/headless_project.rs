@@ -75,6 +75,8 @@ pub struct HeadlessProject {
     // Local variant is used within LSP store, but that's a separate entity.
     pub _toolchain_store: Entity<ToolchainStore>,
     pub kernels: HashMap<String, Child>,
+    #[cfg(unix)]
+    terminal_cli: Option<crate::terminal_cli::TerminalCli>,
 }
 
 pub struct HeadlessAppState {
@@ -367,6 +369,8 @@ impl HeadlessProject {
             profiling_collector: gpui::ProfilingCollector::new(startup_time),
             _toolchain_store: toolchain_store,
             kernels: Default::default(),
+            #[cfg(unix)]
+            terminal_cli: None,
         }
     }
 
@@ -1499,9 +1503,9 @@ impl HeadlessProject {
     }
 
     async fn handle_get_terminal_shell(
-        _this: Entity<Self>,
+        this: Entity<Self>,
         envelope: TypedEnvelope<proto::GetTerminalShell>,
-        cx: AsyncApp,
+        mut cx: AsyncApp,
     ) -> Result<proto::GetTerminalShellResponse> {
         let worktree_id = envelope.payload.worktree_id.map(WorktreeId::from_proto);
         let shell = cx.update(|cx| {
@@ -1513,9 +1517,61 @@ impl HeadlessProject {
         });
         log::debug!("handle_get_terminal_shell: resolved remote terminal shell setting: {shell:?}");
 
-        Ok(proto::GetTerminalShellResponse {
+        let mut response = proto::GetTerminalShellResponse {
             shell: Some(task::shell_to_proto(shell)),
-        })
+            ..Default::default()
+        };
+        #[cfg(unix)]
+        this.update(&mut cx, |this, cx| -> Result<()> {
+            if this.terminal_cli.is_none() {
+                this.terminal_cli = Some(crate::terminal_cli::TerminalCli::new(cx)?);
+            }
+            if let Some(cli) = &this.terminal_cli {
+                response.cli_directory = Some(cli.directory().to_string_lossy().into_owned());
+                response.cli_socket = Some(cli.socket().to_string_lossy().into_owned());
+                response.cli_fallback_path = Some(std::env::var("PATH").unwrap_or_default());
+            }
+            Ok(())
+        })?;
+        #[cfg(not(unix))]
+        let _ = (&this, &mut cx, &mut response);
+        Ok(response)
+    }
+
+    #[cfg(any(unix, test))]
+    pub(crate) async fn open_terminal_folders(
+        this: Entity<Self>,
+        paths: Vec<String>,
+        mut cx: AsyncApp,
+    ) -> Result<()> {
+        anyhow::ensure!(
+            !paths.is_empty() && paths.len() <= 64,
+            "expected 1 to 64 folders"
+        );
+        let fs = this.read_with(&cx, |this, _| this.fs.clone());
+        let mut canonical_paths = Vec::new();
+        for path in paths {
+            let path = PathBuf::from(path);
+            anyhow::ensure!(path.is_absolute(), "folder path must be absolute");
+            let path = fs.canonicalize(&path).await?;
+            anyhow::ensure!(
+                fs.metadata(&path)
+                    .await?
+                    .is_some_and(|metadata| metadata.is_dir),
+                "{} is not a folder",
+                path.display()
+            );
+            canonical_paths.push(path);
+        }
+        for path in canonical_paths {
+            this.update(&mut cx, |this, cx| {
+                this.worktree_store.update(cx, |store, cx| {
+                    store.find_or_create_worktree(path, true, cx)
+                })
+            })
+            .await?;
+        }
+        Ok(())
     }
 }
 
