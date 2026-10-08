@@ -61,49 +61,36 @@ async fn open_project_from_terminal(
     window: WindowHandle<MultiWorkspace>,
     cx: &mut AsyncApp,
 ) -> Result<()> {
-    let (host, app_state) = source.read_with(cx, |workspace, cx| {
-        (
-            workspace.project().read(cx).remote_connection_options(cx),
-            workspace.app_state().clone(),
-        )
+    let host = source.read_with(cx, |workspace, cx| {
+        workspace.project().read(cx).remote_connection_options(cx)
     });
     let host = host.context("the terminal is no longer connected to a remote project")?;
-    let path_list = PathList::new(&paths);
-    let existing = window.update(cx, |multi_workspace, window, cx| {
+    let task = window.update(cx, |multi_workspace, window, cx| {
         multi_workspace.add(source.clone(), window, cx);
         multi_workspace.open_sidebar(cx);
-        if let Some(existing) = multi_workspace.workspace_for_paths(&path_list, Some(&host), cx) {
-            multi_workspace.add(existing.clone(), window, cx);
-            multi_workspace.activate(existing, None, window, cx);
-            true
-        } else {
-            false
-        }
+        let modal_workspace = source.clone();
+        multi_workspace.find_or_create_workspace(
+            PathList::new(&paths),
+            Some(host),
+            None,
+            move |options, window, cx| {
+                remote_connection::connect_with_modal(&modal_workspace, options, window, cx)
+            },
+            None,
+            workspace::OpenMode::Activate,
+            None,
+            window,
+            cx,
+        )
     })?;
-    if existing {
-        return Ok(());
-    }
-    open_remote_project(
-        host.clone(),
-        paths,
-        app_state,
-        OpenOptions {
-            requesting_window: Some(window),
-            workspace_matching: workspace::WorkspaceMatching::None,
-            ..Default::default()
-        },
-        cx,
-    )
-    .await?;
-    window.update(cx, |multi_workspace, window, cx| {
-        let opened = multi_workspace
-            .workspace_for_paths(&path_list, Some(&host), cx)
-            .context("opening the remote project was cancelled or failed")?;
-        multi_workspace.add(opened.clone(), window, cx);
-        multi_workspace.activate(opened, None, window, cx);
-        multi_workspace.open_sidebar(cx);
-        Ok(())
-    })?
+    let result = task.await;
+    source.update(cx, |workspace, cx| {
+        if let Some(modal) = workspace.active_modal::<RemoteConnectionModal>(cx) {
+            modal.update(cx, |modal, cx| modal.finished(cx));
+        }
+    });
+    result?;
+    Ok(())
 }
 
 #[derive(RegisterSetting)]
@@ -677,7 +664,15 @@ mod tests {
         cx: &mut TestAppContext,
         server_cx: &mut TestAppContext,
     ) {
-        let app_state = init_test(cx);
+        // The mock transport below must swap sessions between projects. Only
+        // initialize the launcher here so that simulated swap does not install
+        // an unrelated disconnection overlay on the source workspace.
+        let app_state = cx.update(|cx| {
+            let state = AppState::test(cx);
+            init_terminal_launcher(cx);
+            editor::init(cx);
+            state
+        });
         cx.update(|cx| release_channel::init(semver::Version::new(0, 0, 0), cx));
         server_cx.update(|cx| release_channel::init(semver::Version::new(0, 0, 0), cx));
         let (options, session, guard) = RemoteClient::fake_server(cx, server_cx);
@@ -723,7 +718,6 @@ mod tests {
                 multi_workspace.workspace().clone()
             })
             .unwrap();
-
         // The mock transport serves one proxy at a time. A second transport models
         // the separate server process used by another project on the same host.
         original.update(cx, |workspace, cx| {
@@ -750,14 +744,31 @@ mod tests {
             )
         });
         drop(guard);
-        open_project_from_terminal(
+        let result = open_project_from_terminal(
             original.clone(),
             vec![other_path.clone()],
             window,
             &mut cx.to_async(),
         )
-        .await
-        .unwrap();
+        .await;
+        let projects = window
+            .update(cx, |multi_workspace, _, cx| {
+                multi_workspace
+                    .workspaces()
+                    .map(|workspace| {
+                        (
+                            workspace.read(cx).root_paths(cx),
+                            workspace.read(cx).project_group_key(cx),
+                        )
+                    })
+                    .collect::<Vec<_>>()
+            })
+            .unwrap();
+        assert!(
+            result.is_ok(),
+            "{result:?}; projects: {projects:?}; prompt: {:?}",
+            cx.pending_prompt()
+        );
         cx.run_until_parked();
         let opened = window
             .update(cx, |multi_workspace, _, cx| {
