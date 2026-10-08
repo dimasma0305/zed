@@ -384,6 +384,7 @@ mod tests {
 
     #[test]
     fn test_parse_non_existing_path() {
+        let _lock = CWD_LOCK.lock();
         // Absolute path
         let result = parse_path_with_position(path!("/non/existing/path.txt")).unwrap();
         assert_path_eq!(result, path!("/non/existing/path.txt"));

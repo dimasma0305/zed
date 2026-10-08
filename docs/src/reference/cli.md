@@ -83,9 +83,10 @@ supported in the remote terminal launcher.
 
 Open a new terminal after updating Zed and reconnecting the SSH project. The
 launcher is available for that session; it does not change your shell profile
-or install a graphical application on the remote host. A shell profile that
-replaces `PATH` must preserve the inherited entries for the command to remain
-available. Terminals outside Zed's SSH connection do not receive this launcher.
+or install a graphical application on the remote host. Bash, Zsh, POSIX shells,
+and Fish restore the launcher on `PATH` after startup. Other shells must preserve
+the inherited `PATH`. Terminals outside Zed's SSH connection do not receive this
+launcher.
 
 From your local terminal, you can open a remote project with:
 

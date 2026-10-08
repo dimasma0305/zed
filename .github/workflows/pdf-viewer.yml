@@ -47,7 +47,7 @@ jobs:
           key: pdf-viewer-${{ runner.os }}-rust-1.98.1-${{ hashFiles('Cargo.lock') }}
           restore-keys: pdf-viewer-${{ runner.os }}-rust-1.98.1-
       - name: Check Rust formatting
-        run: cargo fmt -p cli -p pdf_renderer -p pdf_viewer -p zed -p remote -p remote_server -p project -p worktree -p workspace -p proto -p binary_viewer -p gpui_windows -p fs -- --check
+        run: cargo fmt -p cli -p terminal -p pdf_renderer -p pdf_viewer -p zed -p remote -p remote_server -p project -p worktree -p workspace -p proto -p binary_viewer -p gpui_windows -p fs -- --check
       - name: Test the renderer and worker protocol
         run: cargo test --locked -p pdf_renderer
       - name: Build the renderer worker probe

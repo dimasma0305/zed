@@ -34,7 +34,11 @@ def main():
         regular_file = root / "file.txt"
         regular_file.write_text("fixture", encoding="utf-8")
         socket_path = root / "cli.sock"
-        environment = {**os.environ, "ZED_REMOTE_CLI_SOCKET": str(socket_path)}
+        environment = {
+            **os.environ,
+            "ZED_REMOTE_CLI_SOCKET": str(socket_path),
+            "ZED_REMOTE_CLI_DIRECTORY": str(root),
+        }
         with socket.socket(socket.AF_UNIX, socket.SOCK_STREAM) as listener:
             listener.bind(str(socket_path))
             listener.listen(1)
@@ -45,13 +49,23 @@ def main():
                 ([str(other)], [other], {"Ok": None}, 0),
                 (["--add", "../other", "."], [other, folder], {"Ok": None}, 0),
                 (["."], [folder], {"Err": "fixture: project is closed"}, 1),
+                (None, [folder], {"Ok": None}, 0),
             ]
             for arguments, expected, response, expected_exit in cases:
+                command = (["/bin/bash", "--noprofile", "--norc", "-i"]
+                           if arguments is None else [str(launcher), *arguments])
                 process = subprocess.Popen(
-                    [str(launcher), *arguments], cwd=folder, env=environment,
+                    command, cwd=folder, env=environment, stdin=subprocess.PIPE,
                     stdout=subprocess.PIPE, stderr=subprocess.PIPE, text=True,
                 )
                 try:
+                    if arguments is None:
+                        process.stdin.write(
+                            'PATH=/usr/bin:/bin\n'
+                            'export PATH="$ZED_REMOTE_CLI_DIRECTORY:$PATH"\n'
+                            'zed .\nexit\n'
+                        )
+                        process.stdin.flush()
                     with listener.accept()[0] as connection:
                         connection.settimeout(15)
                         length = struct.unpack("!I", receive_exact(connection, 4))[0]
@@ -81,7 +95,7 @@ def main():
         )
         assert help_result.returncode == 0
         assert "current folder" in help_result.stdout
-        print("Remote launcher: 5 IPC cases, 4 error cases and help passed")
+        print("Remote launcher: 6 IPC/startup cases, 4 error cases and help passed")
 
 
 if __name__ == "__main__":
