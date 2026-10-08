@@ -15342,6 +15342,7 @@ dependencies = [
  "rpc",
  "rust-embed",
  "semver",
+ "serde",
  "serde_json",
  "settings",
  "shellexpand",
