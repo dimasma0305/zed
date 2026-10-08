@@ -120,24 +120,28 @@ restrict their build jobs to upstream repository owners.
 
 Download the complete Windows package from this fork's GitHub Releases page.
 Extract every file, including the `remote-servers` folder, and run `zed.exe`.
-This is an unsigned development build with fonts, keymaps,
-and other assets embedded using Zed's `util/debug-embed` feature. The Windows
-renderer uses Zed's release shader compilation path through a package-specific
-Cargo profile override, so it does not need the build machine's source files.
+Published Windows packages use the optimized `release-fast` profile, with
+optimization level 3 and debug information disabled. They are unsigned personal
+builds. Fonts, keymaps and other assets are embedded using Zed's
+`util/debug-embed` feature. The Windows renderer uses release shaders and does
+not need the build machine's source files.
 The application uses Zed's normal Windows GUI entry point, without opening a
 development console window.
 Its commit and executable checksum are included. Use current Windows graphics
 drivers; see the Windows build guide for graphics troubleshooting.
 
-To produce the same portable Windows development executable locally, generate
+To build the optimized Windows executable locally, generate
 the dependency license notices with `script/generate-licenses.ps1`, then run:
 
 ```powershell
 $env:ZED_RELEASE_CHANNEL = "stable"
 $env:RELEASE_CHANNEL = "stable"
 $env:ZED_UPDATE_EXPLANATION = "Download updates from https://github.com/dimasma0305/zed/releases."
-cargo --config 'profile.dev.package.gpui_windows.debug-assertions=false' --config 'profile.dev.package.zed.debug-assertions=false' --config 'profile.dev.package.remote.debug-assertions=false' build --locked -p zed -p cli --bin zed --bin cli --features util/debug-embed,remote/bundled-remote-server
+cargo --config 'profile.release-fast.debug=0' --config 'profile.release-fast.build-override.debug=0' build --profile release-fast --locked -p zed -p cli --bin zed --bin cli --features util/debug-embed,remote/bundled-remote-server
 ```
+
+The optimized executables are in `target/release-fast`. Run `zed.exe` with a
+PDF or binary file path after including the package's runtime dependencies.
 
 The workflow builds a Linux x86_64 remote server from the same source commit.
 For a local package, place the `pdf-zed-linux-remote-server` artifact's contents
@@ -148,8 +152,9 @@ instead of compiling a server or downloading one from upstream.
 
 This package supports remote Linux x86_64 hosts with Ubuntu 24.04-compatible
 runtime libraries. Other remote architectures and operating systems need a
-matching server built and packaged for that platform. The Windows and Linux
-artifacts must come from the same workflow run; the Windows artifact alone is
+matching server built and packaged for that platform. The Windows client and Linux server must use the same source commit. The CI
+Windows development artifact validates integration; published packages use an
+optimized client. A Windows client without its matching server bundle is
 incomplete for remote development. Zig is not required on the user's PC.
 
 The Windows package uses Zed's stable settings and workspace database. Upstream
