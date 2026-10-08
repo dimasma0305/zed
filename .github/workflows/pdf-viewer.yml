@@ -2,7 +2,15 @@ name: PDF viewer fork checks
 
 on:
   push:
-    branches: [feature/pdf-viewer, feature/pdf-remote-packaging, feature/pdf-remote-files, feature/binary-viewer, main]
+    branches:
+      [
+        feature/pdf-viewer,
+        feature/pdf-remote-packaging,
+        feature/pdf-remote-files,
+        feature/binary-viewer,
+        feature/viewer-ui-hex-edit,
+        main,
+      ]
   pull_request:
     branches: [main]
   workflow_dispatch:
@@ -38,7 +46,7 @@ jobs:
           key: pdf-viewer-${{ runner.os }}-rust-1.98.1-${{ hashFiles('Cargo.lock') }}
           restore-keys: pdf-viewer-${{ runner.os }}-rust-1.98.1-
       - name: Check Rust formatting
-        run: cargo fmt -p pdf_renderer -p pdf_viewer -p zed -p remote -p remote_server -p project -p worktree -p workspace -p proto -p binary_viewer -p gpui_windows -- --check
+        run: cargo fmt -p pdf_renderer -p pdf_viewer -p zed -p remote -p remote_server -p project -p worktree -p workspace -p proto -p binary_viewer -p gpui_windows -p fs -- --check
       - name: Test the renderer and worker protocol
         run: cargo test --locked -p pdf_renderer
       - name: Build the renderer worker probe
@@ -85,6 +93,8 @@ jobs:
             pdf-viewer-Linux-rust-1.98.1-
       - name: Set up upstream Linux build dependencies on the disposable runner
         run: ./script/linux
+      - name: Test Linux atomic byte saves and file metadata
+        run: cargo test --locked -p fs binary_edits::tests
       - name: Test remote bundle source, version, protocol and platform selection
         run: cargo test --locked -p remote --features bundled-remote-server transport::bundled_server::tests
       - name: Build the matching Linux server with production assertions
@@ -130,8 +140,10 @@ jobs:
         run: cargo check --locked -p pdf_viewer
       - name: Run PDF viewer GPUI tests
         run: cargo test --locked -p pdf_viewer
-      - name: Run read-only binary viewer GPUI tests
+      - name: Run binary viewer and hex editor GPUI tests
         run: cargo test --locked -p binary_viewer
+      - name: Test atomic byte saves and conflicts
+        run: cargo test --locked -p fs binary_edits::tests
       - name: Test bounded file ranges and cancellation capacity
         run: cargo test --locked -p worktree --lib file_range_tests
       - name: Test SSH binary ranges, viewer navigation and disconnect cleanup

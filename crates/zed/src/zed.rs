@@ -1521,6 +1521,10 @@ fn initialize_pane(
             toolbar.add_item(basedpyright_banner, window, cx);
             let image_view_toolbar = cx.new(|_| image_viewer::ImageViewToolbarControls::new());
             toolbar.add_item(image_view_toolbar, window, cx);
+            let pdf_toolbar = cx.new(|_| pdf_viewer::PdfViewToolbarControls::default());
+            toolbar.add_item(pdf_toolbar, window, cx);
+            let binary_toolbar = cx.new(|_| binary_viewer::BinaryViewToolbarControls::default());
+            toolbar.add_item(binary_toolbar, window, cx);
         })
     });
 }

@@ -1,8 +1,23 @@
 syntax = "proto3";
+
 package zed.messages;
 
 import "core.proto";
 import "worktree.proto";
+
+message BinaryByteEdit {
+  uint64 offset = 1;
+  bytes original = 2;
+  bytes replacement = 3;
+}
+
+message ApplyByteEdits {
+  uint64 project_id = 1;
+  uint64 worktree_id = 2;
+  string path = 3;
+  uint64 file_size = 4;
+  repeated BinaryByteEdit edits = 5;
+}
 
 message DownloadFileByPath {
   uint64 project_id = 1;

@@ -88,6 +88,7 @@ messages!(
     (DownloadFileByPath, Background),
     (DownloadFileResponse, Background),
     (ReadFileRange, Background),
+    (ApplyByteEdits, Background),
     (ReadFileRangeResponse, Background),
     (EndStream, Foreground),
     (Error, Foreground),
@@ -460,6 +461,7 @@ request_messages!(
     (RestoreProjectEntry, RestoreProjectEntryResponse),
     (DownloadFileByPath, DownloadFileResponse),
     (ReadFileRange, ReadFileRangeResponse),
+    (ApplyByteEdits, Ack),
     (ExpandProjectEntry, ExpandProjectEntryResponse),
     (ExpandAllForProjectEntry, ExpandAllForProjectEntryResponse),
     (Follow, FollowResponse),
@@ -912,6 +914,7 @@ entity_messages!(
     FindSearchCandidatesCancelled,
     DownloadFileByPath,
     ReadFileRange,
+    ApplyByteEdits,
     GetRemoteProfilingData
 );
 

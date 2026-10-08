@@ -1825,4 +1825,13 @@
       "escape": "menu::Cancel",
     },
   },
+  {
+    "context": "BinaryViewer > BinaryHexEditor > Editor",
+    "bindings": {
+      "cmd-z": "binary_viewer::Undo",
+      "cmd-shift-z": "binary_viewer::Redo",
+      "cmd-c": "binary_viewer::Copy",
+      "cmd-v": "binary_viewer::Paste",
+    },
+  },
 ]

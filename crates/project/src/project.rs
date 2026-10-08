@@ -3415,6 +3415,66 @@ impl Project {
         self.pending_file_reads.lock().len()
     }
 
+    pub fn apply_byte_edits(
+        &mut self,
+        path: ProjectPath,
+        file_size: u64,
+        edits: Vec<fs::ByteEdit>,
+        cx: &mut Context<Self>,
+    ) -> Task<Result<()>> {
+        if self.is_disconnected(cx)
+            || self
+                .remote_connection_state(cx)
+                .is_some_and(|state| state != remote::ConnectionState::Connected)
+        {
+            return Task::ready(Err(anyhow!(
+                "Remote project is disconnected. Reconnect before saving"
+            )));
+        }
+        if let Err(error) = fs::validate_byte_edits(file_size, &edits) {
+            return Task::ready(Err(error));
+        }
+        let Some(worktree) = self.worktree_for_id(path.worktree_id, cx) else {
+            return Task::ready(Err(anyhow!("File worktree is unavailable")));
+        };
+        let guard = match self.file_range_limiter.acquire() {
+            Ok(guard) => guard,
+            Err(error) => return Task::ready(Err(error)),
+        };
+        if worktree.read(cx).is_local() {
+            let save = worktree.update(cx, |worktree, cx| {
+                worktree.apply_byte_edits(path.path, file_size, edits, cx)
+            });
+            return cx.background_spawn(async move {
+                let _guard = guard;
+                save.await
+            });
+        }
+        let Some(remote) = &self.remote_client else {
+            return Task::ready(Err(anyhow!("Hex editing requires a local or SSH project")));
+        };
+        let client = remote.read(cx).proto_client();
+        let request = proto::ApplyByteEdits {
+            project_id: self.remote_id().unwrap_or(REMOTE_SERVER_PROJECT_ID),
+            worktree_id: path.worktree_id.to_proto(),
+            path: path.path.as_unix_str().to_owned(),
+            file_size,
+            edits: edits
+                .into_iter()
+                .map(|edit| proto::BinaryByteEdit {
+                    offset: edit.offset,
+                    original: edit.original,
+                    replacement: edit.replacement,
+                })
+                .collect(),
+        };
+        cx.spawn(async move |_, _| {
+            let _guard = guard;
+            client.request(request).await?;
+            Ok(())
+        })
+    }
+
     #[ztracing::instrument(skip_all)]
     pub fn open_buffer(
         &mut self,

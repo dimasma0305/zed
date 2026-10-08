@@ -21,8 +21,9 @@ use util::ResultExt as _;
 #[cfg(not(any(test, feature = "test-support")))]
 use util::command::{Stdio, new_command};
 use workspace::{
-    ItemId, ItemSettings, Pane, Workspace, WorkspaceId, delete_unloaded_items,
-    item::{Item, ItemBufferKind, ItemEvent, ProjectItem, SerializableItem},
+    ItemId, ItemSettings, Pane, ToolbarItemEvent, ToolbarItemLocation, ToolbarItemView, Workspace,
+    WorkspaceId, delete_unloaded_items,
+    item::{Item, ItemBufferKind, ItemEvent, ItemHandle, ProjectItem, SerializableItem},
 };
 
 actions!(
@@ -848,14 +849,120 @@ impl Focusable for PdfView {
     }
 }
 
-impl Render for PdfView {
-    fn render(&mut self, window: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
+impl PdfView {
+    fn render_toolbar(&mut self, _window: &mut Window, cx: &mut Context<Self>) -> AnyElement {
         let page_label = if self.page_count == 0 {
             "Page — / —".to_string()
         } else {
             format!("Page {} / {}", self.page_index + 1, self.page_count)
         };
         let zoom_label = format!("{:.0}%", self.effective_zoom() * 100.0);
+        h_flex()
+            .key_context("PdfViewer")
+            .gap_1()
+            .on_action(cx.listener(Self::confirm_page))
+            .on_action(cx.listener(Self::cancel_page))
+            .child(
+                IconButton::new("pdf-previous", IconName::ChevronLeft)
+                    .icon_size(IconSize::Small)
+                    .aria_label("Previous PDF page")
+                    .disabled(self.page_index == 0 || self.page_count == 0)
+                    .tooltip(|_, cx| Tooltip::for_action("Previous Page", &PreviousPage, cx))
+                    .on_click(cx.listener(|this, _, window, cx| {
+                        this.previous_page(&PreviousPage, window, cx)
+                    })),
+            )
+            .child(if let Some(editor) = self.page_editor.as_ref() {
+                h_flex()
+                    .w(px(80.0))
+                    .child(editor.clone())
+                    .into_any_element()
+            } else {
+                Button::new("pdf-page-number", page_label)
+                    .style(ButtonStyle::Subtle)
+                    .disabled(self.page_count == 0)
+                    .tooltip(|_, cx| Tooltip::for_action("Go to Page", &GoToPage, cx))
+                    .on_click(
+                        cx.listener(|this, _, window, cx| this.go_to_page(&GoToPage, window, cx)),
+                    )
+                    .into_any_element()
+            })
+            .child(
+                IconButton::new("pdf-next", IconName::ChevronRight)
+                    .icon_size(IconSize::Small)
+                    .aria_label("Next PDF page")
+                    .disabled(self.page_count == 0 || self.page_index + 1 >= self.page_count)
+                    .tooltip(|_, cx| Tooltip::for_action("Next Page", &NextPage, cx))
+                    .on_click(
+                        cx.listener(|this, _, window, cx| this.next_page(&NextPage, window, cx)),
+                    ),
+            )
+            .child(
+                IconButton::new("pdf-zoom-out", IconName::Dash)
+                    .icon_size(IconSize::Small)
+                    .aria_label("Zoom out")
+                    .tooltip(|_, cx| Tooltip::for_action("Zoom Out", &ZoomOut, cx))
+                    .on_click(
+                        cx.listener(|this, _, window, cx| this.zoom_out(&ZoomOut, window, cx)),
+                    ),
+            )
+            .child(if let Some(editor) = self.zoom_editor.as_ref() {
+                h_flex()
+                    .w(px(64.0))
+                    .child(editor.clone())
+                    .into_any_element()
+            } else {
+                h_flex()
+                    .id("pdf-zoom-percentage")
+                    .px_1()
+                    .cursor_pointer()
+                    .child(Label::new(zoom_label).size(LabelSize::Small))
+                    .tooltip(|_, cx| {
+                        Tooltip::with_meta(
+                            "Edit Zoom",
+                            None,
+                            "Ctrl-wheel or pinch to zoom. Right-click to reset to 100%.",
+                            cx,
+                        )
+                    })
+                    .on_click(cx.listener(|this, _, window, cx| this.edit_zoom(window, cx)))
+                    .on_mouse_down(
+                        MouseButton::Right,
+                        cx.listener(|this, _, window, cx| this.reset_zoom(&ResetZoom, window, cx)),
+                    )
+                    .into_any_element()
+            })
+            .child(
+                IconButton::new("pdf-zoom-in", IconName::Plus)
+                    .icon_size(IconSize::Small)
+                    .aria_label("Zoom in")
+                    .tooltip(|_, cx| Tooltip::for_action("Zoom In", &ZoomIn, cx))
+                    .on_click(cx.listener(|this, _, window, cx| this.zoom_in(&ZoomIn, window, cx))),
+            )
+            .child(
+                IconButton::new("pdf-fit", IconName::Maximize)
+                    .icon_size(IconSize::Small)
+                    .tooltip(|_, cx| Tooltip::for_action("Fit Page", &FitToPage, cx))
+                    .toggle_state(self.fit_to_page)
+                    .on_click(cx.listener(|this, _, window, cx| this.fit(&FitToPage, window, cx))),
+            )
+            .child(
+                IconButton::new("pdf-reload", IconName::RotateCw)
+                    .icon_size(IconSize::Small)
+                    .tooltip(|_, cx| Tooltip::for_action("Reload PDF", &Reload, cx))
+                    .on_click(
+                        cx.listener(|this, _, window, cx| this.reload_pdf(&Reload, window, cx)),
+                    ),
+            )
+            .when(self.loading, |element| {
+                element.child(Label::new("Loading PDF…").color(Color::Muted))
+            })
+            .into_any_element()
+    }
+}
+
+impl Render for PdfView {
+    fn render(&mut self, window: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
         let this = cx.entity().downgrade();
         let zoom = self.effective_zoom();
         let page = self.page_size.unwrap_or_default();
@@ -924,109 +1031,6 @@ impl Render for PdfView {
             .on_action(cx.listener(Self::reset_zoom))
             .on_action(cx.listener(Self::fit))
             .on_action(cx.listener(Self::reload_pdf))
-            .child(
-                h_flex()
-                    .flex_wrap()
-                    .gap_1()
-                    .p_2()
-                    .border_b_1()
-                    .border_color(cx.theme().colors().border)
-                    .child(
-                        IconButton::new("pdf-previous", IconName::ChevronLeft)
-                            .aria_label("Previous PDF page")
-                            .disabled(self.page_index == 0 || self.page_count == 0)
-                            .tooltip(|_, cx| {
-                                Tooltip::for_action("Previous Page", &PreviousPage, cx)
-                            })
-                            .on_click(cx.listener(|this, _, window, cx| {
-                                this.previous_page(&PreviousPage, window, cx)
-                            })),
-                    )
-                    .child(if let Some(editor) = self.page_editor.as_ref() {
-                        h_flex()
-                            .w(px(80.0))
-                            .child(editor.clone())
-                            .into_any_element()
-                    } else {
-                        Button::new("pdf-page-number", page_label)
-                            .disabled(self.page_count == 0)
-                            .tooltip(|_, cx| Tooltip::for_action("Go to Page", &GoToPage, cx))
-                            .on_click(cx.listener(|this, _, window, cx| {
-                                this.go_to_page(&GoToPage, window, cx)
-                            }))
-                            .into_any_element()
-                    })
-                    .child(
-                        IconButton::new("pdf-next", IconName::ChevronRight)
-                            .aria_label("Next PDF page")
-                            .disabled(
-                                self.page_count == 0 || self.page_index + 1 >= self.page_count,
-                            )
-                            .tooltip(|_, cx| Tooltip::for_action("Next Page", &NextPage, cx))
-                            .on_click(cx.listener(|this, _, window, cx| {
-                                this.next_page(&NextPage, window, cx)
-                            })),
-                    )
-                    .child(
-                        IconButton::new("pdf-zoom-out", IconName::Dash)
-                            .aria_label("Zoom out")
-                            .tooltip(|_, cx| Tooltip::for_action("Zoom Out", &ZoomOut, cx))
-                            .on_click(cx.listener(|this, _, window, cx| {
-                                this.zoom_out(&ZoomOut, window, cx)
-                            })),
-                    )
-                    .child(if let Some(editor) = self.zoom_editor.as_ref() {
-                        h_flex()
-                            .w(px(64.0))
-                            .child(editor.clone())
-                            .into_any_element()
-                    } else {
-                        h_flex()
-                            .id("pdf-zoom-percentage")
-                            .px_1()
-                            .cursor_pointer()
-                            .child(Label::new(zoom_label).size(LabelSize::Small))
-                            .tooltip(|_, cx| {
-                                Tooltip::with_meta(
-                                    "Edit Zoom",
-                                    None,
-                                    "Ctrl-wheel or pinch to zoom. Right-click to reset to 100%.",
-                                    cx,
-                                )
-                            })
-                            .on_click(cx.listener(|this, _, window, cx| this.edit_zoom(window, cx)))
-                            .on_mouse_down(
-                                MouseButton::Right,
-                                cx.listener(|this, _, window, cx| {
-                                    this.reset_zoom(&ResetZoom, window, cx)
-                                }),
-                            )
-                            .into_any_element()
-                    })
-                    .child(
-                        IconButton::new("pdf-zoom-in", IconName::Plus)
-                            .aria_label("Zoom in")
-                            .tooltip(|_, cx| Tooltip::for_action("Zoom In", &ZoomIn, cx))
-                            .on_click(
-                                cx.listener(|this, _, window, cx| {
-                                    this.zoom_in(&ZoomIn, window, cx)
-                                }),
-                            ),
-                    )
-                    .child(
-                        Button::new("pdf-fit", "Fit Page")
-                            .toggle_state(self.fit_to_page)
-                            .on_click(
-                                cx.listener(|this, _, window, cx| this.fit(&FitToPage, window, cx)),
-                            ),
-                    )
-                    .child(Button::new("pdf-reload", "Reload").on_click(
-                        cx.listener(|this, _, window, cx| this.reload_pdf(&Reload, window, cx)),
-                    ))
-                    .when(self.loading, |element| {
-                        element.child(Label::new("Loading PDF…").color(Color::Muted))
-                    }),
-            )
             .when_some(self.page_input_error.clone(), |element, error| {
                 element.child(Label::new(error).color(Color::Error))
             })
@@ -1075,6 +1079,41 @@ impl Render for PdfView {
     }
 }
 
+#[derive(Default)]
+pub struct PdfViewToolbarControls {
+    view: Option<WeakEntity<PdfView>>,
+    subscription: Option<gpui::Subscription>,
+}
+impl EventEmitter<ToolbarItemEvent> for PdfViewToolbarControls {}
+impl ToolbarItemView for PdfViewToolbarControls {
+    fn set_active_pane_item(
+        &mut self,
+        item: Option<&dyn ItemHandle>,
+        _: &mut Window,
+        cx: &mut Context<Self>,
+    ) -> ToolbarItemLocation {
+        self.view = None;
+        self.subscription = None;
+        if let Some(view) = item.and_then(|item| item.downcast::<PdfView>()) {
+            self.subscription = Some(cx.observe(&view, |_, _, cx| cx.notify()));
+            self.view = Some(view.downgrade());
+            cx.notify();
+            ToolbarItemLocation::PrimaryRight
+        } else {
+            ToolbarItemLocation::Hidden
+        }
+    }
+}
+impl Render for PdfViewToolbarControls {
+    fn render(&mut self, window: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
+        self.view
+            .as_ref()
+            .and_then(WeakEntity::upgrade)
+            .map(|view| view.update(cx, |view, cx| view.render_toolbar(window, cx)))
+            .unwrap_or_else(|| div().into_any_element())
+    }
+}
+
 impl Item for PdfView {
     type Event = PdfViewEvent;
     fn tab_content_text(&self, _: usize, cx: &App) -> SharedString {
@@ -1111,6 +1150,7 @@ impl Item for PdfView {
     fn to_item_events(event: &Self::Event, callback: &mut dyn FnMut(ItemEvent)) {
         if matches!(event, PdfViewEvent::TitleChanged) {
             callback(ItemEvent::UpdateTab);
+            callback(ItemEvent::UpdateBreadcrumbs);
         }
     }
     fn capability(&self, _: &App) -> language::Capability {
@@ -1118,6 +1158,33 @@ impl Item for PdfView {
     }
     fn buffer_kind(&self, _: &App) -> ItemBufferKind {
         ItemBufferKind::Singleton
+    }
+    fn breadcrumb_location(&self, cx: &App) -> ToolbarItemLocation {
+        if editor::EditorSettings::get_global(cx).toolbar.breadcrumbs {
+            ToolbarItemLocation::PrimaryLeft
+        } else {
+            ToolbarItemLocation::Hidden
+        }
+    }
+    fn breadcrumbs(
+        &self,
+        cx: &App,
+    ) -> Option<(Vec<language::HighlightedText>, Option<gpui::Font>)> {
+        let project = self.project.read(cx);
+        let document = self.document.read(cx);
+        let mut path = document.path.path.to_rel_path_buf();
+        if project.visible_worktrees(cx).count() > 1
+            && let Some(worktree) = project.worktree_for_id(document.path.worktree_id, cx)
+        {
+            path = worktree.read(cx).root_name().join(&path);
+        }
+        Some((
+            vec![language::HighlightedText {
+                text: path.display(project.path_style(cx)).to_string().into(),
+                highlights: vec![],
+            }],
+            None,
+        ))
     }
     fn can_split(&self) -> bool {
         true
@@ -1242,6 +1309,32 @@ mod tests {
         cx.run_until_parked();
     }
 
+    struct TestViewer {
+        view: Entity<PdfView>,
+    }
+    impl Render for TestViewer {
+        fn render(&mut self, window: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
+            let toolbar = self
+                .view
+                .update(cx, |view, cx| view.render_toolbar(window, cx));
+            v_flex()
+                .size_full()
+                .child(toolbar)
+                .child(div().flex_1().min_h_0().child(self.view.clone()))
+        }
+    }
+    fn add_view(
+        cx: &mut TestAppContext,
+        build: impl FnOnce(&mut Window, &mut Context<PdfView>) -> PdfView,
+    ) -> (Entity<PdfView>, &mut VisualTestContext) {
+        let (host, cx) = cx.add_window_view(|window, cx| {
+            let view = cx.new(|cx| build(window, cx));
+            cx.observe(&view, |_, _, cx| cx.notify()).detach();
+            TestViewer { view }
+        });
+        (host.read_with(cx, |host, _| host.view.clone()), cx)
+    }
+
     async fn open_pdf(
         bytes: &[u8],
         cx: &mut TestAppContext,
@@ -1301,8 +1394,9 @@ mod tests {
     #[gpui::test]
     async fn draws_scrollable_pages_and_validates_page_input(cx: &mut TestAppContext) {
         let (project, document) = open_pdf(TWO_PAGES, cx).await;
-        let (view, cx) =
-            cx.add_window_view(|window, cx| PdfView::new(document, project, 0, window, cx));
+        let (view, cx) = add_view(cx, |window, cx| {
+            PdfView::new(document, project, 0, window, cx)
+        });
         cx.simulate_resize(size(px(500.0), px(400.0)));
         draw_window(cx);
         view.update_in(cx, |view, window, cx| {
@@ -1398,8 +1492,9 @@ mod tests {
     #[gpui::test(iterations = 5)]
     async fn wheel_zoom_is_anchored_and_ordinary_scroll_stays_on_the_page(cx: &mut TestAppContext) {
         let (project, document) = open_pdf(TWO_PAGES, cx).await;
-        let (view, cx) =
-            cx.add_window_view(|window, cx| PdfView::new(document, project, 0, window, cx));
+        let (view, cx) = add_view(cx, |window, cx| {
+            PdfView::new(document, project, 0, window, cx)
+        });
         cx.simulate_resize(size(px(500.0), px(400.0)));
         draw_window(cx);
         view.update_in(cx, |view, window, cx| {
@@ -1481,8 +1576,9 @@ mod tests {
         cx: &mut TestAppContext,
     ) {
         let (project, document) = open_pdf(TWO_PAGES, cx).await;
-        let (view, cx) =
-            cx.add_window_view(|window, cx| PdfView::new(document, project, 0, window, cx));
+        let (view, cx) = add_view(cx, |window, cx| {
+            PdfView::new(document, project, 0, window, cx)
+        });
         draw_window(cx);
         let position = view.read_with(cx, |view, _| {
             view.viewport_bounds.expect("viewport").center()
@@ -1577,8 +1673,9 @@ mod tests {
     #[gpui::test]
     async fn hand_drag_clamps_and_releasing_outside_ends_panning(cx: &mut TestAppContext) {
         let (project, document) = open_pdf(TWO_PAGES, cx).await;
-        let (view, cx) =
-            cx.add_window_view(|window, cx| PdfView::new(document, project, 0, window, cx));
+        let (view, cx) = add_view(cx, |window, cx| {
+            PdfView::new(document, project, 0, window, cx)
+        });
         cx.simulate_resize(size(px(500.0), px(400.0)));
         draw_window(cx);
         view.update_in(cx, |view, window, cx| view.set_zoom(4.0, window, cx));
@@ -1628,8 +1725,9 @@ mod tests {
     #[gpui::test]
     async fn zoom_percentage_validates_confirms_and_cancels(cx: &mut TestAppContext) {
         let (project, document) = open_pdf(TWO_PAGES, cx).await;
-        let (view, cx) =
-            cx.add_window_view(|window, cx| PdfView::new(document, project, 0, window, cx));
+        let (view, cx) = add_view(cx, |window, cx| {
+            PdfView::new(document, project, 0, window, cx)
+        });
         draw_window(cx);
         view.update_in(cx, |view, window, cx| view.edit_zoom(window, cx));
         draw_window(cx);

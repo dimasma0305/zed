@@ -12,7 +12,8 @@ number when you reopen a project.
 
 ## Navigation
 
-Use the arrows above the page to move between pages. Click the page number,
+The pane toolbar follows the image viewer layout, with file breadcrumbs,
+compact navigation controls and action tooltips. Use its arrows to move between pages. Click the page number,
 enter a number from 1 to the page count, and press `Enter`. Press `Escape` to
 cancel. You can also use these commands while the PDF tab has focus:
 
@@ -102,7 +103,7 @@ The repository pins Rust 1.98.1. On Windows, the C++ build tools, Windows SDK
 26100, CMake, and Spectre-mitigated libraries listed in the Windows guide are
 required.
 
-From this fork's `main` or `feature/pdf-remote-files` branch:
+From this fork's `feature/viewer-ui-hex-edit` branch:
 
 ```sh
 cargo test --locked -p pdf_renderer

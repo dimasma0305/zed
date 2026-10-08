@@ -315,6 +315,7 @@ impl HeadlessProject {
         session.add_entity_request_handler(Self::handle_restrict_worktrees);
         session.add_entity_request_handler(Self::handle_download_file_by_path);
         session.add_entity_request_handler(Self::handle_read_file_range);
+        session.add_entity_request_handler(Self::handle_apply_byte_edits);
 
         session.add_entity_message_handler(Self::handle_find_search_candidates_cancel);
         session.add_entity_request_handler(BufferStore::handle_update_buffer);
@@ -779,6 +780,47 @@ impl HeadlessProject {
                 .collect::<HashSet<_>>();
             trusted_worktrees.restrict(worktree_store, restricted_paths, cx);
         });
+        Ok(proto::Ack {})
+    }
+
+    pub async fn handle_apply_byte_edits(
+        this: Entity<Self>,
+        message: TypedEnvelope<proto::ApplyByteEdits>,
+        mut cx: AsyncApp,
+    ) -> Result<proto::Ack> {
+        let request = message.payload;
+        anyhow::ensure!(
+            request.project_id == REMOTE_SERVER_PROJECT_ID,
+            "Byte edit project is unavailable"
+        );
+        let edits = request
+            .edits
+            .into_iter()
+            .map(|edit| fs::ByteEdit {
+                offset: edit.offset,
+                original: edit.original,
+                replacement: edit.replacement,
+            })
+            .collect::<Vec<_>>();
+        fs::validate_byte_edits(request.file_size, &edits)?;
+        let path: Arc<RelPath> = RelPath::from_unix_str(&request.path)?.into();
+        let (worktree_store, guard) = this.read_with(&cx, |this, _| {
+            Ok::<_, anyhow::Error>((
+                this.worktree_store.clone(),
+                this.file_range_limiter.acquire()?,
+            ))
+        })?;
+        let _guard = guard;
+        let worktree = worktree_store
+            .read_with(&cx, |store, cx| {
+                store.worktree_for_id(WorktreeId::from_proto(request.worktree_id), cx)
+            })
+            .context("File worktree is unavailable")?;
+        worktree
+            .update(&mut cx, |worktree, cx| {
+                worktree.apply_byte_edits(path, request.file_size, edits, cx)
+            })
+            .await?;
         Ok(proto::Ack {})
     }
 

@@ -526,7 +526,8 @@ message Envelope {
     GetTerminalShell get_terminal_shell = 494;
     GetTerminalShellResponse get_terminal_shell_response = 495;
     ReadFileRange read_file_range = 496;
-    ReadFileRangeResponse read_file_range_response = 497; // current max
+    ReadFileRangeResponse read_file_range_response = 497;
+    ApplyByteEdits apply_byte_edits = 498; // current max
   }
 
   reserved 87 to 88;

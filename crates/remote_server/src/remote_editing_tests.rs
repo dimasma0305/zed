@@ -777,6 +777,93 @@ async fn test_remote_binary_ranges_and_cancellation_capacity(
 }
 
 #[gpui::test(iterations = 5)]
+async fn test_remote_binary_byte_edits_save_retry_conflict_and_containment(
+    cx: &mut TestAppContext,
+    server_cx: &mut TestAppContext,
+) {
+    let (fs, project, path) = remote_pdf_project(cx, server_cx).await;
+    let file = path!("/code/pdf-test/edit.bin");
+    fs.insert_file(file, vec![0, 1, 2, 255]).await;
+    let path = ProjectPath {
+        path: rel_path("edit.bin").into(),
+        ..path
+    };
+    let edits = vec![fs::ByteEdit {
+        offset: 1,
+        original: vec![1, 2],
+        replacement: vec![9, 8],
+    }];
+    for _ in 0..2 {
+        project
+            .update(cx, |project, cx| {
+                project.apply_byte_edits(path.clone(), 4, edits.clone(), cx)
+            })
+            .await
+            .unwrap();
+    }
+    assert_eq!(
+        fs.load_bytes(Path::new(file)).await.unwrap(),
+        [0, 9, 8, 255]
+    );
+    fs.insert_file(file, vec![0, 7, 8, 255]).await;
+    assert!(
+        project
+            .update(cx, |project, cx| project.apply_byte_edits(
+                path.clone(),
+                4,
+                edits.clone(),
+                cx
+            ))
+            .await
+            .is_err()
+    );
+    assert_eq!(
+        fs.load_bytes(Path::new(file)).await.unwrap(),
+        [0, 7, 8, 255]
+    );
+    let client = project.read_with(cx, |project, cx| {
+        project.remote_client().unwrap().read(cx).proto_client()
+    });
+    fs.insert_file(path!("/code/outside.bin"), vec![0, 1, 2, 3])
+        .await;
+    fs.insert_symlink(
+        path!("/code/pdf-test/outside.bin"),
+        PathBuf::from(path!("/code/outside.bin")),
+    )
+    .await;
+    for (relative, offset, original, replacement) in [
+        ("edit.bin", 4, vec![0], vec![9]),
+        ("edit.bin", 0, vec![0], vec![9, 8]),
+        ("../outside.bin", 0, vec![0], vec![9]),
+        ("outside.bin", 0, vec![0], vec![9]),
+        ("missing.bin", 0, vec![0], vec![9]),
+    ] {
+        assert!(
+            client
+                .request(proto::ApplyByteEdits {
+                    project_id: proto::REMOTE_SERVER_PROJECT_ID,
+                    worktree_id: path.worktree_id.to_proto(),
+                    path: relative.into(),
+                    file_size: 4,
+                    edits: vec![proto::BinaryByteEdit {
+                        offset,
+                        original,
+                        replacement
+                    }],
+                })
+                .await
+                .is_err()
+        );
+    }
+    assert_eq!(
+        fs.load_bytes(Path::new(path!("/code/outside.bin")))
+            .await
+            .unwrap(),
+        [0, 1, 2, 3]
+    );
+}
+
+#[gpui::test(iterations = 5)]
 async fn test_remote_binary_server_bounds_containment_and_errors(
     cx: &mut TestAppContext,
     server_cx: &mut TestAppContext,

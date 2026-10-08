@@ -1,4 +1,6 @@
+mod binary_edits;
 pub mod fs_watcher;
+pub use binary_edits::{ByteEdit, MAX_BINARY_EDIT_BYTES, validate_byte_edits};
 mod git_clone_progress;
 
 use parking_lot::Mutex;
@@ -140,6 +142,14 @@ pub trait Fs: Send + Sync {
     }
     async fn load_bytes(&self, path: &Path) -> Result<Vec<u8>>;
     async fn atomic_write(&self, path: PathBuf, text: String) -> Result<()>;
+    async fn apply_byte_edits(
+        &self,
+        _path: PathBuf,
+        _file_size: u64,
+        _edits: Vec<ByteEdit>,
+    ) -> Result<()> {
+        anyhow::bail!("Byte editing is unavailable for this filesystem")
+    }
     async fn save(&self, path: &Path, text: &Rope, line_ending: LineEnding) -> Result<()>;
     async fn write(&self, path: &Path, content: &[u8]) -> Result<()>;
     async fn canonicalize(&self, path: &Path) -> Result<PathBuf>;
@@ -738,6 +748,16 @@ fn read_dir_entries(path: PathBuf) -> Result<impl Send + Iterator<Item = Result<
 
 #[async_trait::async_trait]
 impl Fs for RealFs {
+    async fn apply_byte_edits(
+        &self,
+        path: PathBuf,
+        file_size: u64,
+        edits: Vec<ByteEdit>,
+    ) -> Result<()> {
+        self.executor
+            .spawn(async move { binary_edits::save_byte_edits(&path, file_size, &edits) })
+            .await
+    }
     async fn create_dir(&self, path: &Path) -> Result<()> {
         Ok(smol::fs::create_dir_all(path).await?)
     }
@@ -2979,6 +2999,23 @@ impl FileHandle for FakeHandle {
 #[cfg(feature = "test-support")]
 #[async_trait::async_trait]
 impl Fs for FakeFs {
+    async fn apply_byte_edits(
+        &self,
+        path: PathBuf,
+        file_size: u64,
+        edits: Vec<ByteEdit>,
+    ) -> Result<()> {
+        validate_byte_edits(file_size, &edits)?;
+        let bytes = self.load_bytes(&path).await?;
+        anyhow::ensure!(
+            bytes.len() as u64 == file_size,
+            "File size changed. Reload before editing again"
+        );
+        let mut output = Vec::with_capacity(bytes.len());
+        binary_edits::copy_with_byte_edits(&mut bytes.as_slice(), &mut output, file_size, &edits)?;
+        self.write_file_internal(normalize_path(&path), output, true)?;
+        Ok(())
+    }
     async fn create_dir(&self, path: &Path) -> Result<()> {
         self.simulate_random_delay().await;
 
