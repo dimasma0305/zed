@@ -1542,6 +1542,7 @@ impl HeadlessProject {
     pub(crate) async fn open_terminal_folders(
         this: Entity<Self>,
         paths: Vec<String>,
+        add: bool,
         mut cx: AsyncApp,
     ) -> Result<()> {
         anyhow::ensure!(
@@ -1562,6 +1563,19 @@ impl HeadlessProject {
                 path.display()
             );
             canonical_paths.push(path);
+        }
+        if !add {
+            let session = this.read_with(&cx, |this, _| this.session.clone());
+            session
+                .request(proto::OpenProjectFromTerminal {
+                    project_id: REMOTE_SERVER_PROJECT_ID,
+                    paths: canonical_paths
+                        .into_iter()
+                        .map(|path| path.to_string_lossy().into_owned())
+                        .collect(),
+                })
+                .await?;
+            return Ok(());
         }
         for path in canonical_paths {
             this.update(&mut cx, |this, cx| {

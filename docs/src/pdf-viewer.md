@@ -103,7 +103,7 @@ The repository pins Rust 1.98.1. On Windows, the C++ build tools, Windows SDK
 26100, CMake, and Spectre-mitigated libraries listed in the Windows guide are
 required.
 
-From this fork's `feature/viewer-ui-hex-edit` branch:
+From this fork's `fix/pdf-scroll-terminal-projects` branch:
 
 ```sh
 cargo test --locked -p pdf_renderer

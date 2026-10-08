@@ -70,8 +70,11 @@ def main():
                         connection.settimeout(15)
                         length = struct.unpack("!I", receive_exact(connection, 4))[0]
                         assert 0 < length <= 65536
-                        paths = json.loads(receive_exact(connection, length))
-                        assert paths == [str(path.resolve()) for path in expected], paths
+                        request = json.loads(receive_exact(connection, length))
+                        assert request == {
+                            "paths": [str(path.resolve()) for path in expected],
+                            "add": arguments is not None and "--add" in arguments,
+                        }, request
                         body = json.dumps(response).encode()
                         connection.sendall(struct.pack("!I", len(body)) + body)
                     stdout, stderr = process.communicate(timeout=15)

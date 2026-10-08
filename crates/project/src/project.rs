@@ -369,6 +369,7 @@ pub enum Event {
     },
     LanguageServerPrompt(LanguageServerPromptRequest),
     LanguageServerShowDocument(LanguageServerShowDocumentRequest),
+    OpenProjectFromTerminal(TerminalProjectRequest),
     LanguageNotFound(Entity<Buffer>),
     ActiveEntryChanged(Option<ProjectEntryId>),
     ActivateProjectPanel,
@@ -447,6 +448,24 @@ pub enum Event {
 }
 
 pub struct AgentLocationChanged;
+
+#[derive(Clone, Debug)]
+pub struct TerminalProjectRequest {
+    pub paths: Vec<PathBuf>,
+    response_channel: async_channel::Sender<std::result::Result<(), String>>,
+}
+
+impl TerminalProjectRequest {
+    pub fn respond(self, result: std::result::Result<(), String>) {
+        self.response_channel.try_send(result).log_err();
+    }
+}
+
+impl PartialEq for TerminalProjectRequest {
+    fn eq(&self, other: &Self) -> bool {
+        self.paths == other.paths
+    }
+}
 
 pub enum DebugAdapterClientState {
     Starting(Task<Option<Arc<DebugAdapterClient>>>),
@@ -1689,6 +1708,7 @@ impl Project {
             remote_proto.add_entity_message_handler(Self::handle_toast);
             remote_proto.add_entity_message_handler(Self::handle_telemetry_event);
             remote_proto.add_entity_request_handler(Self::handle_language_server_prompt_request);
+            remote_proto.add_entity_request_handler(Self::handle_open_project_from_terminal);
             remote_proto
                 .add_entity_request_handler(Self::handle_language_server_show_document_request);
             remote_proto.add_entity_message_handler(Self::handle_hide_toast);
@@ -5968,6 +5988,36 @@ impl Project {
                     .map(|index| index as u64)
             }),
         })
+    }
+
+    async fn handle_open_project_from_terminal(
+        project: Entity<Self>,
+        envelope: TypedEnvelope<proto::OpenProjectFromTerminal>,
+        mut cx: AsyncApp,
+    ) -> Result<proto::Ack> {
+        let paths = envelope.payload.paths;
+        anyhow::ensure!(
+            !paths.is_empty() && paths.len() <= 64,
+            "expected 1 to 64 folders"
+        );
+        anyhow::ensure!(
+            paths.iter().map(String::len).sum::<usize>() <= 64 * 1024,
+            "folder paths are too long"
+        );
+        let (response_channel, response) = async_channel::bounded(1);
+        project.update(&mut cx, |_, cx| {
+            cx.emit(Event::OpenProjectFromTerminal(TerminalProjectRequest {
+                paths: paths.into_iter().map(PathBuf::from).collect(),
+                response_channel,
+            }));
+        });
+        drop(project);
+        response
+            .recv()
+            .await
+            .context("the project window did not handle the terminal request")?
+            .map_err(anyhow::Error::msg)?;
+        Ok(proto::Ack {})
     }
 
     async fn handle_language_server_show_document_request(

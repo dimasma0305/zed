@@ -91,7 +91,7 @@ async fn test_terminal_cli_adds_folders_to_connected_project(
             path!("/cli-folders/with spaces").to_string(),
         ],
     ] {
-        HeadlessProject::open_terminal_folders(headless.clone(), paths, server_cx.to_async())
+        HeadlessProject::open_terminal_folders(headless.clone(), paths, true, server_cx.to_async())
             .await
             .unwrap();
         cx.run_until_parked();
@@ -116,15 +116,92 @@ async fn test_terminal_cli_adds_folders_to_connected_project(
         vec![path!("/cli-folders/missing").into()],
     ] {
         assert!(
-            HeadlessProject::open_terminal_folders(headless.clone(), paths, server_cx.to_async())
-                .await
-                .is_err()
+            HeadlessProject::open_terminal_folders(
+                headless.clone(),
+                paths,
+                true,
+                server_cx.to_async()
+            )
+            .await
+            .is_err()
         );
     }
     cx.run_until_parked();
     project.read_with(cx, |project, cx| {
         assert_eq!(project.visible_worktrees(cx).count(), 2)
     });
+}
+
+#[gpui::test]
+async fn test_terminal_cli_opens_a_separate_project_without_adding_worktrees(
+    cx: &mut TestAppContext,
+    server_cx: &mut TestAppContext,
+) {
+    let fs = FakeFs::new(server_cx.executor());
+    fs.insert_tree(path!("/cli-projects"), json!({"original": {}, "other": {}}))
+        .await;
+    let (project, headless) = init_test(&fs, cx, server_cx).await;
+    HeadlessProject::open_terminal_folders(
+        headless.clone(),
+        vec![path!("/cli-projects/original").into()],
+        true,
+        server_cx.to_async(),
+    )
+    .await
+    .unwrap();
+    cx.run_until_parked();
+    let requests = Rc::new(RefCell::new(Vec::new()));
+    let subscription = cx.update(|cx| {
+        let requests = requests.clone();
+        cx.subscribe(&project, move |_, event, _| {
+            if let project::Event::OpenProjectFromTerminal(request) = event {
+                requests.borrow_mut().push(request.paths.clone());
+                request.clone().respond(Ok(()));
+            }
+        })
+    });
+    HeadlessProject::open_terminal_folders(
+        headless.clone(),
+        vec![path!("/cli-projects/other").into()],
+        false,
+        server_cx.to_async(),
+    )
+    .await
+    .unwrap();
+    cx.run_until_parked();
+    assert_eq!(
+        *requests.borrow(),
+        vec![vec![PathBuf::from(path!("/cli-projects/other"))]]
+    );
+    project.read_with(cx, |project, cx| {
+        assert_eq!(
+            project
+                .visible_worktrees(cx)
+                .map(|worktree| worktree.read(cx).abs_path().to_path_buf())
+                .collect::<Vec<_>>(),
+            vec![PathBuf::from(path!("/cli-projects/original"))]
+        );
+    });
+    drop(subscription);
+    let subscription = cx.update(|cx| {
+        cx.subscribe(&project, |_, event, _| {
+            if let project::Event::OpenProjectFromTerminal(request) = event {
+                request
+                    .clone()
+                    .respond(Err("fixture: opening project failed".into()));
+            }
+        })
+    });
+    let error = HeadlessProject::open_terminal_folders(
+        headless,
+        vec![path!("/cli-projects/other").into()],
+        false,
+        server_cx.to_async(),
+    )
+    .await
+    .unwrap_err();
+    assert!(format!("{error:#}").contains("fixture: opening project failed"));
+    drop(subscription);
 }
 
 #[gpui::test]

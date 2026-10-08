@@ -18,14 +18,21 @@ const REQUEST_TIMEOUT: Duration = Duration::from_secs(30);
 #[derive(Parser)]
 #[command(
     name = "zed",
-    about = "Add folders to this Zed SSH project. With no path, open the current folder."
+    about = "Open a project in this Zed window. With no path, open the current folder."
 )]
 struct Args {
-    /// Add folders to the connected project (the default in an SSH terminal).
+    /// Add folders to the connected project instead of opening a separate project.
     #[arg(short, long)]
     add: bool,
     #[arg(value_name = "FOLDERS", value_hint = clap::ValueHint::DirPath)]
     paths: Vec<PathBuf>,
+}
+
+#[derive(serde::Serialize, serde::Deserialize)]
+#[serde(deny_unknown_fields)]
+struct Request {
+    paths: Vec<String>,
+    add: bool,
 }
 
 pub fn run() -> Result<()> {
@@ -33,7 +40,10 @@ pub fn run() -> Result<()> {
     let socket = std::env::var_os("ZED_REMOTE_CLI_SOCKET")
         .context("run this command in a connected Zed SSH terminal")?;
     let paths = resolve_folders(args.paths, &std::env::current_dir()?)?;
-    let request = serde_json::to_vec(&paths)?;
+    let request = serde_json::to_vec(&Request {
+        paths,
+        add: args.add,
+    })?;
     anyhow::ensure!(
         request.len() <= MAX_MESSAGE_BYTES,
         "folder paths are too long"
@@ -98,9 +108,15 @@ impl TerminalCli {
                 };
                 let request = async {
                     let result = async {
-                        let paths = read_request(&mut stream).await?;
+                        let request = read_request(&mut stream).await?;
                         let project = project.upgrade().context("remote project was closed")?;
-                        HeadlessProject::open_terminal_folders(project, paths, cx.clone()).await
+                        HeadlessProject::open_terminal_folders(
+                            project,
+                            request.paths,
+                            request.add,
+                            cx.clone(),
+                        )
+                        .await
                     }
                     .await;
                     write_response(&mut stream, result).await
@@ -130,19 +146,19 @@ impl TerminalCli {
     }
 }
 
-async fn read_request(stream: &mut UnixStream) -> Result<Vec<String>> {
+async fn read_request(stream: &mut UnixStream) -> Result<Request> {
     let mut length = [0; 4];
     stream.read_exact(&mut length).await?;
     let length = u32::from_be_bytes(length) as usize;
     anyhow::ensure!(length <= MAX_MESSAGE_BYTES, "folder request is too large");
     let mut request = vec![0; length];
     stream.read_exact(&mut request).await?;
-    let paths: Vec<String> = serde_json::from_slice(&request)?;
+    let request: Request = serde_json::from_slice(&request)?;
     anyhow::ensure!(
-        !paths.is_empty() && paths.len() <= 64,
+        !request.paths.is_empty() && request.paths.len() <= 64,
         "expected 1 to 64 folders"
     );
-    Ok(paths)
+    Ok(request)
 }
 
 async fn write_response(stream: &mut UnixStream, result: Result<()>) -> Result<()> {
@@ -189,7 +205,14 @@ mod tests {
             for body in [
                 b"[]".to_vec(),
                 b"not json".to_vec(),
-                serde_json::to_vec(&vec!["/tmp"; 65])?,
+                serde_json::to_vec(&Request {
+                    paths: vec!["/tmp".into(); 65],
+                    add: false,
+                })?,
+                serde_json::to_vec(&Request {
+                    paths: vec![],
+                    add: true,
+                })?,
             ] {
                 let (mut sender, mut receiver) = UnixStream::pair()?;
                 sender.write_all(&(body.len() as u32).to_be_bytes()).await?;

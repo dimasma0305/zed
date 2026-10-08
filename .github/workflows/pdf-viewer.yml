@@ -10,6 +10,7 @@ on:
         feature/binary-viewer,
         feature/viewer-ui-hex-edit,
         feature/cli-current-directory,
+        fix/pdf-scroll-terminal-projects,
         main,
       ]
   pull_request:
@@ -47,7 +48,7 @@ jobs:
           key: pdf-viewer-${{ runner.os }}-rust-1.98.1-${{ hashFiles('Cargo.lock') }}
           restore-keys: pdf-viewer-${{ runner.os }}-rust-1.98.1-
       - name: Check Rust formatting
-        run: cargo fmt -p cli -p terminal -p pdf_renderer -p pdf_viewer -p zed -p remote -p remote_server -p project -p worktree -p workspace -p proto -p binary_viewer -p gpui_windows -p fs -- --check
+        run: cargo fmt -p cli -p terminal -p pdf_renderer -p pdf_viewer -p zed -p remote -p remote_server -p project -p worktree -p workspace -p proto -p binary_viewer -p gpui_windows -p fs -p recent_projects -- --check
       - name: Test the renderer and worker protocol
         run: cargo test --locked -p pdf_renderer
       - name: Build the renderer worker probe
@@ -147,6 +148,8 @@ jobs:
         run: cargo test --locked -p cli --bin cli -- --test-threads=1
       - name: Test folders opened from remote terminals
         run: cargo test --locked -p remote_server --lib test_terminal_cli
+      - name: Test terminal launches create sidebar projects
+        run: cargo test --locked -p recent_projects test_terminal_cli
       - name: Test remote terminal launcher environment
         run: cargo test --locked -p project remote_cli_environment
       - name: Run PDF viewer GPUI tests

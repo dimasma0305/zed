@@ -7,7 +7,7 @@ use anyhow::{Context as _, Result};
 use askpass::EncryptedPassword;
 use editor::Editor;
 use futures::{FutureExt as _, channel::oneshot, select};
-use gpui::{AppContext, AsyncApp, PromptLevel, WindowHandle};
+use gpui::{App, AppContext, AsyncApp, Entity, PromptLevel, WindowHandle};
 
 use project::trusted_worktrees;
 use remote::{
@@ -16,6 +16,7 @@ use remote::{
 };
 pub use settings::SshConnection;
 use settings::{DevContainerConnection, ExtendingVec, RegisterSetting, Settings, WslConnection};
+use util::path_list::PathList;
 use util::paths::PathWithPosition;
 use workspace::{
     AppState, MultiWorkspace, OpenOptions, SerializedWorkspaceLocation, Workspace,
@@ -26,6 +27,84 @@ pub use remote_connection::{
     RemoteClientDelegate, RemoteConnectionModal, RemoteConnectionPrompt, SshConnectionHeader,
     connect,
 };
+
+pub(crate) fn init_terminal_launcher(cx: &mut App) {
+    cx.observe_new(|workspace: &mut Workspace, window, cx| {
+        let Some(window) = window else { return };
+        let project = workspace.project().clone();
+        cx.subscribe_in(&project, window, |_, _, event, window, cx| {
+            let project::Event::OpenProjectFromTerminal(request) = event else {
+                return;
+            };
+            let request = request.clone();
+            let source = cx.entity();
+            let window = window.window_handle().downcast::<MultiWorkspace>();
+            cx.spawn(async move |_, cx| {
+                let result = match window {
+                    Some(window) => {
+                        open_project_from_terminal(source, request.paths.clone(), window, cx).await
+                    }
+                    None => Err(anyhow::anyhow!("the source project window was closed")),
+                };
+                request.respond(result.map_err(|error| format!("{error:#}")));
+            })
+            .detach();
+        })
+        .detach();
+    })
+    .detach();
+}
+
+async fn open_project_from_terminal(
+    source: Entity<Workspace>,
+    paths: Vec<PathBuf>,
+    window: WindowHandle<MultiWorkspace>,
+    cx: &mut AsyncApp,
+) -> Result<()> {
+    let (host, app_state) = source.read_with(cx, |workspace, cx| {
+        (
+            workspace.project().read(cx).remote_connection_options(cx),
+            workspace.app_state().clone(),
+        )
+    });
+    let host = host.context("the terminal is no longer connected to a remote project")?;
+    let path_list = PathList::new(&paths);
+    let existing = window.update(cx, |multi_workspace, window, cx| {
+        multi_workspace.add(source.clone(), window, cx);
+        multi_workspace.open_sidebar(cx);
+        if let Some(existing) = multi_workspace.workspace_for_paths(&path_list, Some(&host), cx) {
+            multi_workspace.add(existing.clone(), window, cx);
+            multi_workspace.activate(existing, None, window, cx);
+            true
+        } else {
+            false
+        }
+    })?;
+    if existing {
+        return Ok(());
+    }
+    open_remote_project(
+        host.clone(),
+        paths,
+        app_state,
+        OpenOptions {
+            requesting_window: Some(window),
+            workspace_matching: workspace::WorkspaceMatching::None,
+            ..Default::default()
+        },
+        cx,
+    )
+    .await?;
+    window.update(cx, |multi_workspace, window, cx| {
+        let opened = multi_workspace
+            .workspace_for_paths(&path_list, Some(&host), cx)
+            .context("opening the remote project was cancelled or failed")?;
+        multi_workspace.add(opened.clone(), window, cx);
+        multi_workspace.activate(opened, None, window, cx);
+        multi_workspace.open_sidebar(cx);
+        Ok(())
+    })?
+}
 
 #[derive(RegisterSetting)]
 pub struct RemoteSettings {
@@ -591,6 +670,123 @@ mod tests {
                 });
             })
             .unwrap();
+    }
+
+    #[gpui::test]
+    async fn test_terminal_cli_creates_and_reuses_a_sidebar_project(
+        cx: &mut TestAppContext,
+        server_cx: &mut TestAppContext,
+    ) {
+        let app_state = init_test(cx);
+        cx.update(|cx| release_channel::init(semver::Version::new(0, 0, 0), cx));
+        server_cx.update(|cx| release_channel::init(semver::Version::new(0, 0, 0), cx));
+        let (options, session, guard) = RemoteClient::fake_server(cx, server_cx);
+        let fs = FakeFs::new(server_cx.executor());
+        fs.insert_tree(
+            path!("/terminal-projects"),
+            json!({"original": {}, "other": {}}),
+        )
+        .await;
+        server_cx.update(HeadlessProject::init);
+        let headless = server_cx.new(|cx| {
+            HeadlessProject::new(
+                HeadlessAppState {
+                    session,
+                    fs: fs.clone(),
+                    http_client: Arc::new(BlockedHttpClient),
+                    node_runtime: NodeRuntime::unavailable(),
+                    languages: Arc::new(language::LanguageRegistry::new(
+                        cx.background_executor().clone(),
+                    )),
+                    extension_host_proxy: Arc::new(ExtensionHostProxy::new()),
+                    startup_time: std::time::Instant::now(),
+                },
+                false,
+                cx,
+            )
+        });
+        drop(guard);
+        let original_path = PathBuf::from(path!("/terminal-projects/original"));
+        let other_path = PathBuf::from(path!("/terminal-projects/other"));
+        let window = open_remote_project(
+            options.clone(),
+            vec![original_path.clone()],
+            app_state,
+            OpenOptions::default(),
+            &mut cx.to_async(),
+        )
+        .await
+        .unwrap();
+        cx.run_until_parked();
+        let original = window
+            .update(cx, |multi_workspace, _, _| {
+                multi_workspace.workspace().clone()
+            })
+            .unwrap();
+
+        // The mock transport serves one proxy at a time. A second transport models
+        // the separate server process used by another project on the same host.
+        original.update(cx, |workspace, cx| {
+            let client = workspace.project().read(cx).remote_client().unwrap();
+            client.update(cx, |client, cx| client.force_server_not_running(cx));
+        });
+        cx.run_until_parked();
+        let (session, guard) = RemoteClient::fake_server_with_opts(&options, cx, server_cx);
+        let other_headless = server_cx.new(|cx| {
+            HeadlessProject::new(
+                HeadlessAppState {
+                    session,
+                    fs,
+                    http_client: Arc::new(BlockedHttpClient),
+                    node_runtime: NodeRuntime::unavailable(),
+                    languages: Arc::new(language::LanguageRegistry::new(
+                        cx.background_executor().clone(),
+                    )),
+                    extension_host_proxy: Arc::new(ExtensionHostProxy::new()),
+                    startup_time: std::time::Instant::now(),
+                },
+                false,
+                cx,
+            )
+        });
+        drop(guard);
+        open_project_from_terminal(
+            original.clone(),
+            vec![other_path.clone()],
+            window,
+            &mut cx.to_async(),
+        )
+        .await
+        .unwrap();
+        cx.run_until_parked();
+        let opened = window
+            .update(cx, |multi_workspace, _, cx| {
+                assert!(multi_workspace.sidebar_open());
+                assert_eq!(multi_workspace.project_group_keys().len(), 2);
+                let opened = multi_workspace.workspace().clone();
+                assert_ne!(original, opened);
+                assert_eq!(
+                    original.read(cx).root_paths(cx),
+                    vec![Arc::<Path>::from(original_path)]
+                );
+                assert_eq!(
+                    opened.read(cx).root_paths(cx),
+                    vec![Arc::<Path>::from(other_path.clone())]
+                );
+                opened
+            })
+            .unwrap();
+        open_project_from_terminal(original, vec![other_path], window, &mut cx.to_async())
+            .await
+            .unwrap();
+        window
+            .update(cx, |multi_workspace, _, _| {
+                assert_eq!(multi_workspace.workspace(), &opened);
+                assert_eq!(multi_workspace.project_group_keys().len(), 2);
+            })
+            .unwrap();
+        assert_eq!(cx.update(|cx| cx.windows().len()), 1);
+        drop((headless, other_headless));
     }
 
     #[gpui::test]

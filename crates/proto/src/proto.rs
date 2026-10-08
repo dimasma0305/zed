@@ -148,6 +148,7 @@ messages!(
     (GetSignatureHelpResponse, Background),
     (GetTerminalShell, Background),
     (GetTerminalShellResponse, Background),
+    (OpenProjectFromTerminal, Foreground),
     (GetTypeDefinition, Background),
     (GetTypeDefinitionResponse, Background),
     (GetImplementation, Background),
@@ -658,6 +659,7 @@ request_messages!(
     (GitClone, GitCloneResponse),
     (GetDirectoryEnvironment, DirectoryEnvironment),
     (GetTerminalShell, GetTerminalShellResponse),
+    (OpenProjectFromTerminal, Ack),
     (GetProcesses, GetProcessesResponse),
     (GetAgentServerCommand, AgentServerCommand),
     (GetContextServerCommand, ContextServerCommand),
@@ -862,6 +864,7 @@ entity_messages!(
     ToggleLspLogs,
     GetDirectoryEnvironment,
     GetTerminalShell,
+    OpenProjectFromTerminal,
 
     Push,
     Fetch,

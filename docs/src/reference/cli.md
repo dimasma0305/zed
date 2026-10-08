@@ -66,8 +66,8 @@ zed myfile.txt:42:10     # Open at line 42, column 10
 ## From a Zed SSH Terminal
 
 In a newly opened terminal in a connected Linux or macOS SSH project, `zed`
-adds the terminal's current folder to that project. You can also pass one or
-more existing folders:
+opens the terminal's current folder as a separate project in the same window's
+project sidebar. You can also pass one or more existing folders:
 
 ```sh
 zed
@@ -76,9 +76,10 @@ zed /root/things
 zed --add "/home/me/folder with spaces"
 ```
 
-The folders appear in the connected project's Project Panel. Repeating a folder
-already covered by the project reuses it. This command opens folders only and
-always uses the connected project; `--new`, files, diffs, and `--wait` are not
+Repeating the same project paths activates the existing project. Your original
+project stays in the sidebar. Use `zed --add path/to/folder` to add folders to the
+terminal's current project instead; those folders appear in its Project Panel.
+This command opens folders only; `--new`, files, diffs, and `--wait` are not
 supported in the remote terminal launcher.
 
 Open a new terminal after updating Zed and reconnecting the SSH project. The

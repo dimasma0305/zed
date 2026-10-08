@@ -972,6 +972,8 @@ impl Render for PdfView {
             (page.height * zoom + px(PAGE_PADDING * 2.0)).max(self.viewport_size.height);
         let content = div()
             .id("pdf-page-scroll")
+            .absolute()
+            .inset_0()
             .size_full()
             .overflow_scroll()
             .track_scroll(&self.scroll_handle)
@@ -1006,13 +1008,6 @@ impl Render for PdfView {
                                 .flex_shrink_0(),
                         )
                     }),
-            )
-            .custom_scrollbars(
-                ui::Scrollbars::new(ui::ScrollAxes::Both)
-                    .tracked_scroll_handle(&self.scroll_handle)
-                    .tracked_entity(cx.entity_id()),
-                window,
-                cx,
             );
         v_flex()
             .key_context("PdfViewer")
@@ -1039,8 +1034,10 @@ impl Render for PdfView {
             })
             .child(
                 div()
+                    .id("pdf-viewport")
                     .relative()
                     .flex_1()
+                    .min_w_0()
                     .min_h_0()
                     .overflow_hidden()
                     .child(
@@ -1074,6 +1071,16 @@ impl Render for PdfView {
                             .into_any_element()
                     } else {
                         content.into_any_element()
+                    })
+                    // Scrollbars belong to the viewport, outside the page's scroll transform.
+                    .when(self.error.is_none(), |viewport| {
+                        viewport.custom_scrollbars(
+                            ui::Scrollbars::new(ui::ScrollAxes::Both)
+                                .tracked_scroll_handle(&self.scroll_handle)
+                                .tracked_entity(cx.entity_id()),
+                            window,
+                            cx,
+                        )
                     }),
             )
     }
@@ -1443,6 +1450,54 @@ mod tests {
             assert!(view.page_editor.is_none());
             assert!(view.error.is_none());
         });
+    }
+
+    #[gpui::test]
+    async fn scrollbars_stay_at_viewport_edges_after_zoom_and_pan(cx: &mut TestAppContext) {
+        let (project, document) = open_pdf(TWO_PAGES, cx).await;
+        let (view, cx) = add_view(cx, |window, cx| {
+            PdfView::new(document, project, 0, window, cx)
+        });
+        cx.simulate_resize(size(px(500.0), px(400.0)));
+        draw_window(cx);
+        view.update_in(cx, |view, window, cx| view.set_zoom(8.0, window, cx));
+        cx.run_until_parked();
+        draw_window(cx);
+        for viewport in [size(px(500.0), px(400.0)), size(px(420.0), px(320.0))] {
+            cx.simulate_resize(viewport);
+            draw_window(cx);
+            view.update(cx, |view, cx| {
+                view.scroll_handle.set_offset(point(px(-200.0), px(-300.0)));
+                cx.notify();
+            });
+            draw_window(cx);
+            let bounds = view.read_with(cx, |view, _| view.viewport_bounds.expect("viewport"));
+            let vertical_track = point(bounds.right() - px(8.0), bounds.bottom() - px(40.0));
+            cx.simulate_mouse_move(vertical_track, None, Modifiers::default());
+            draw_window(cx);
+            cx.simulate_click(vertical_track, Modifiers::default());
+            draw_window(cx);
+            view.read_with(cx, |view, _| {
+                assert!(
+                    view.scroll_handle.offset().y < px(-300.0),
+                    "vertical scrollbar must remain at the viewport's right edge after panning"
+                );
+                assert_eq!(view.scroll_handle.offset().x, px(-200.0));
+                assert!(view.last_mouse_position.is_none());
+            });
+            let horizontal_track = point(bounds.right() - px(40.0), bounds.bottom() - px(8.0));
+            cx.simulate_mouse_move(horizontal_track, None, Modifiers::default());
+            draw_window(cx);
+            cx.simulate_click(horizontal_track, Modifiers::default());
+            draw_window(cx);
+            view.read_with(cx, |view, _| {
+                assert!(
+                    view.scroll_handle.offset().x < px(-200.0),
+                    "horizontal scrollbar must remain at the viewport's bottom edge after panning"
+                );
+                assert!(view.last_mouse_position.is_none());
+            });
+        }
     }
 
     #[gpui::test]
