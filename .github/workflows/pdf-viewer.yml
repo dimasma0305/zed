@@ -103,14 +103,14 @@ jobs:
       - name: Test remote bundle source, version, protocol and platform selection
         run: cargo test --locked -p remote --features bundled-remote-server transport::bundled_server::tests
       - name: Build the matching Linux server with production assertions
-        run: cargo --config 'profile.release-fast.opt-level=3' --config 'profile.release-fast.debug=0' --config 'profile.release-fast.debug-assertions=false' --config 'profile.release-fast.strip="debuginfo"' build --locked --profile release-fast -p remote_server --features remote_server/debug-embed
+        run: cargo --config 'profile.release-fast.opt-level=3' --config 'profile.release-fast.debug=0' --config 'profile.release-fast.debug-assertions=false' --config 'profile.release-fast.strip="debuginfo"' build --locked --profile release-fast -p remote_server --bin remote-server --features remote_server/debug-embed
       - name: Test the remote terminal launcher process
-        run: python3 script/check-remote-terminal-cli.py target/release-fast/remote_server
+        run: python3 script/check-remote-terminal-cli.py target/release-fast/remote-server
       - name: Validate runtime dependencies and exact server identity
         run: |
-          ldd target/release-fast/remote_server | tee remote-server-dependencies.txt
+          ldd target/release-fast/remote-server | tee remote-server-dependencies.txt
           ! grep -q 'not found' remote-server-dependencies.txt
-          python3 script/package-pdf-remote-server.py target/release-fast/remote_server pdf-remote-server --commit "$GITHUB_SHA"
+          python3 script/package-pdf-remote-server.py target/release-fast/remote-server pdf-remote-server --commit "$GITHUB_SHA"
           cp remote-server-dependencies.txt pdf-remote-server/
       - uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a
         with:

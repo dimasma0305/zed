@@ -59,7 +59,11 @@ async fn open_project_from_terminal(
     cx: &mut AsyncApp,
 ) -> Result<()> {
     let host = source.read_with(cx, |workspace, cx| {
-        workspace.project().read(cx).remote_connection_options(cx)
+        workspace
+            .project()
+            .read(cx)
+            .remote_connection_options(cx)
+            .cloned()
     });
     let host = host.context("the terminal is no longer connected to a remote project")?;
     let task = window.update(cx, |multi_workspace, window, cx| {
