@@ -1160,6 +1160,59 @@ impl Worktree {
         })
     }
 
+    pub fn apply_byte_edits(
+        &self,
+        path: Arc<RelPath>,
+        file_size: u64,
+        edits: Vec<fs::ByteEdit>,
+        cx: &Context<Worktree>,
+    ) -> Task<Result<()>> {
+        let Worktree::Local(worktree) = self else {
+            return Task::ready(Err(anyhow!(
+                "Remote byte edits require the project transport"
+            )));
+        };
+        if let Err(error) = fs::validate_byte_edits(file_size, &edits) {
+            return Task::ready(Err(error));
+        }
+        let absolute_path = worktree.absolutize(&path);
+        let root_path = worktree.snapshot.abs_path().clone();
+        let fs = worktree.fs.clone();
+        let write = cx.background_spawn(async move {
+            let root_path = fs.canonicalize(&root_path).await?;
+            let canonical_path = fs.canonicalize(&absolute_path).await?;
+            anyhow::ensure!(
+                canonical_path.starts_with(&root_path),
+                "Binary file is outside its worktree"
+            );
+            let metadata = fs
+                .metadata(&canonical_path)
+                .await?
+                .context("File was deleted")?;
+            anyhow::ensure!(
+                !metadata.is_dir && !metadata.is_fifo && metadata.is_writable,
+                "File is not a writable regular file"
+            );
+            anyhow::ensure!(
+                metadata.len == file_size,
+                "File size changed. Reload before editing again"
+            );
+            fs.apply_byte_edits(canonical_path, file_size, edits).await
+        });
+        cx.spawn(async move |this, cx| {
+            write.await?;
+            let refresh = this.update(cx, |this, cx| {
+                Ok::<_, anyhow::Error>(
+                    this.as_local_mut()
+                        .context("Local worktree was closed")?
+                        .refresh_entry(path, None, cx),
+                )
+            })??;
+            refresh.await?;
+            Ok(())
+        })
+    }
+
     pub fn write_file(
         &self,
         path: Arc<RelPath>,

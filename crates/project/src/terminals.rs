@@ -384,28 +384,36 @@ impl Project {
 
         let lang_registry = self.languages.clone();
         cx.spawn(async move |project, cx| {
-            let remote_shell = if let Some(remote_shell_request) = remote_shell_request {
-                let response = remote_shell_request
+            let (remote_shell, remote_cli) = if let Some(remote_shell_request) =
+                remote_shell_request
+            {
+                let mut response = remote_shell_request
                     .await
                     .context("failed to get terminal shell settings from remote server")?;
                 let shell = response
                     .shell
+                    .take()
                     .context("remote server returned no terminal shell")?;
                 let shell = task::shell_from_proto(shell)
                     .context("remote server returned an invalid terminal shell")?;
                 log::debug!(
                     "create_terminal_shell_internal: using remote terminal shell setting: {shell:?}"
                 );
-                Some(shell)
+                (Some(shell), Some(response))
             } else {
-                None
+                (None, None)
             };
-            let shell_program = remote_shell.as_ref().map(Shell::program).unwrap_or(shell);
+            let shell_program = match remote_shell.as_ref() {
+                Some(Shell::System) | None => shell,
+                Some(shell) => shell.program(),
+            };
             let shell_kind = ShellKind::new(&shell_program, path_style.is_windows());
             let mut env = env_task.await.unwrap_or_default();
             env.extend(settings.env);
+            let cli_activation = remote_cli
+                .and_then(|response| insert_remote_cli_env(&mut env, response, shell_kind));
 
-            let activation_script = maybe!(async {
+            let mut activation_script = maybe!(async {
                 for toolchain in toolchains {
                     let Some(toolchain) = toolchain.await else {
                         continue;
@@ -423,6 +431,9 @@ impl Project {
             })
             .await
             .unwrap_or_default();
+            if let Some(cli_activation) = cli_activation {
+                activation_script.push(cli_activation.to_owned());
+            }
 
             let builder = project
                 .update(cx, move |_, cx| {
@@ -641,6 +652,31 @@ impl Project {
     }
 }
 
+fn insert_remote_cli_env(
+    env: &mut HashMap<String, String>,
+    response: proto::GetTerminalShellResponse,
+    shell_kind: ShellKind,
+) -> Option<&'static str> {
+    if let (Some(directory), Some(socket)) = (response.cli_directory, response.cli_socket) {
+        let path = env
+            .get("PATH")
+            .cloned()
+            .or(response.cli_fallback_path)
+            .unwrap_or_default();
+        env.insert("PATH".into(), format!("{directory}:{path}"));
+        env.insert("ZED_REMOTE_CLI_DIRECTORY".into(), directory);
+        env.insert("ZED_REMOTE_CLI_SOCKET".into(), socket);
+        // Login profiles can replace PATH after SSH supplies the environment.
+        // Use the same post-startup activation flow as virtual environments.
+        return match shell_kind {
+            ShellKind::Posix => Some("export PATH=\"$ZED_REMOTE_CLI_DIRECTORY:$PATH\""),
+            ShellKind::Fish => Some("set -gx PATH \"$ZED_REMOTE_CLI_DIRECTORY\" $PATH"),
+            _ => None,
+        };
+    }
+    None
+}
+
 fn create_remote_shell(
     spawn_command: Option<(&String, &Vec<String>)>,
     mut env: HashMap<String, String>,
@@ -748,6 +784,43 @@ fn quote_cmd_command_arg_for_outer_shell(arg: &str, shell_kind: ShellKind) -> Op
 mod tests {
     use super::*;
     use pretty_assertions::assert_eq;
+
+    #[test]
+    fn remote_cli_environment_preserves_project_path() {
+        let response = proto::GetTerminalShellResponse {
+            cli_directory: Some("/tmp/zed-cli-session".into()),
+            cli_socket: Some("/tmp/zed-cli-session/cli.sock".into()),
+            cli_fallback_path: Some("/usr/bin:/bin".into()),
+            ..Default::default()
+        };
+        let mut env = HashMap::default();
+        env.insert("PATH".into(), "/project/bin:/usr/bin".into());
+        assert_eq!(
+            insert_remote_cli_env(&mut env, response.clone(), ShellKind::Posix),
+            Some("export PATH=\"$ZED_REMOTE_CLI_DIRECTORY:$PATH\"")
+        );
+        assert_eq!(env["PATH"], "/tmp/zed-cli-session:/project/bin:/usr/bin");
+        assert_eq!(
+            env["ZED_REMOTE_CLI_SOCKET"],
+            "/tmp/zed-cli-session/cli.sock"
+        );
+        let mut fallback = HashMap::default();
+        assert_eq!(
+            insert_remote_cli_env(&mut fallback, response, ShellKind::Fish),
+            Some("set -gx PATH \"$ZED_REMOTE_CLI_DIRECTORY\" $PATH")
+        );
+        assert_eq!(fallback["PATH"], "/tmp/zed-cli-session:/usr/bin:/bin");
+        let original = env.clone();
+        assert_eq!(
+            insert_remote_cli_env(
+                &mut env,
+                proto::GetTerminalShellResponse::default(),
+                ShellKind::Posix
+            ),
+            None
+        );
+        assert_eq!(env, original);
+    }
 
     fn prepared_cmd_task(command_arg: &str) -> SpawnInTerminal {
         SpawnInTerminal {

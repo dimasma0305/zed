@@ -1,5 +1,8 @@
 mod headless_project;
 
+#[cfg(unix)]
+pub mod terminal_cli;
+
 #[cfg(test)]
 mod remote_editing_tests;
 

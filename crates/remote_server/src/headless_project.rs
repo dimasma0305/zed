@@ -79,6 +79,8 @@ pub struct HeadlessProject {
     pub kernels: HashMap<String, Child>,
     search_buffer_batches: async_channel::Sender<SearchBufferBatch>,
     _search_buffer_sender: Task<()>,
+    #[cfg(unix)]
+    terminal_cli: Option<crate::terminal_cli::TerminalCli>,
 }
 
 pub struct HeadlessAppState {
@@ -330,6 +332,7 @@ impl HeadlessProject {
         session.add_entity_request_handler(Self::handle_restrict_worktrees);
         session.add_entity_request_handler(Self::handle_download_file_by_path);
         session.add_entity_request_handler(Self::handle_read_file_range);
+        session.add_entity_request_handler(Self::handle_apply_byte_edits);
 
         session.add_entity_message_handler(Self::handle_find_search_candidates_cancel);
         session.add_entity_request_handler(BufferStore::handle_update_buffer);
@@ -436,6 +439,8 @@ impl HeadlessProject {
             kernels: Default::default(),
             search_buffer_batches,
             _search_buffer_sender: search_buffer_sender,
+            #[cfg(unix)]
+            terminal_cli: None,
         }
     }
 
@@ -849,6 +854,47 @@ impl HeadlessProject {
                 .collect::<HashSet<_>>();
             trusted_worktrees.restrict(worktree_store, restricted_paths, cx);
         });
+        Ok(proto::Ack {})
+    }
+
+    pub async fn handle_apply_byte_edits(
+        this: Entity<Self>,
+        message: TypedEnvelope<proto::ApplyByteEdits>,
+        mut cx: AsyncApp,
+    ) -> Result<proto::Ack> {
+        let request = message.payload;
+        anyhow::ensure!(
+            request.project_id == REMOTE_SERVER_PROJECT_ID,
+            "Byte edit project is unavailable"
+        );
+        let edits = request
+            .edits
+            .into_iter()
+            .map(|edit| fs::ByteEdit {
+                offset: edit.offset,
+                original: edit.original,
+                replacement: edit.replacement,
+            })
+            .collect::<Vec<_>>();
+        fs::validate_byte_edits(request.file_size, &edits)?;
+        let path: Arc<RelPath> = RelPath::from_unix_str(&request.path)?.into();
+        let (worktree_store, guard) = this.read_with(&cx, |this, _| {
+            Ok::<_, anyhow::Error>((
+                this.worktree_store.clone(),
+                this.file_range_limiter.acquire()?,
+            ))
+        })?;
+        let _guard = guard;
+        let worktree = worktree_store
+            .read_with(&cx, |store, cx| {
+                store.worktree_for_id(WorktreeId::from_proto(request.worktree_id), cx)
+            })
+            .context("File worktree is unavailable")?;
+        worktree
+            .update(&mut cx, |worktree, cx| {
+                worktree.apply_byte_edits(path, request.file_size, edits, cx)
+            })
+            .await?;
         Ok(proto::Ack {})
     }
 
@@ -1524,9 +1570,9 @@ impl HeadlessProject {
     }
 
     async fn handle_get_terminal_shell(
-        _this: Entity<Self>,
+        this: Entity<Self>,
         envelope: TypedEnvelope<proto::GetTerminalShell>,
-        cx: AsyncApp,
+        mut cx: AsyncApp,
     ) -> Result<proto::GetTerminalShellResponse> {
         let worktree_id = envelope.payload.worktree_id.map(WorktreeId::from_proto);
         let shell = cx.update(|cx| {
@@ -1538,9 +1584,75 @@ impl HeadlessProject {
         });
         log::debug!("handle_get_terminal_shell: resolved remote terminal shell setting: {shell:?}");
 
-        Ok(proto::GetTerminalShellResponse {
+        let mut response = proto::GetTerminalShellResponse {
             shell: Some(task::shell_to_proto(shell)),
-        })
+            ..Default::default()
+        };
+        #[cfg(unix)]
+        this.update(&mut cx, |this, cx| -> Result<()> {
+            if this.terminal_cli.is_none() {
+                this.terminal_cli = Some(crate::terminal_cli::TerminalCli::new(cx)?);
+            }
+            if let Some(cli) = &this.terminal_cli {
+                response.cli_directory = Some(cli.directory().to_string_lossy().into_owned());
+                response.cli_socket = Some(cli.socket().to_string_lossy().into_owned());
+                response.cli_fallback_path = Some(std::env::var("PATH").unwrap_or_default());
+            }
+            Ok(())
+        })?;
+        #[cfg(not(unix))]
+        let _ = (&this, &mut cx, &mut response);
+        Ok(response)
+    }
+
+    #[cfg(any(unix, test))]
+    pub(crate) async fn open_terminal_folders(
+        this: Entity<Self>,
+        paths: Vec<String>,
+        add: bool,
+        mut cx: AsyncApp,
+    ) -> Result<()> {
+        anyhow::ensure!(
+            !paths.is_empty() && paths.len() <= 64,
+            "expected 1 to 64 folders"
+        );
+        let fs = this.read_with(&cx, |this, _| this.fs.clone());
+        let mut canonical_paths = Vec::new();
+        for path in paths {
+            let path = PathBuf::from(path);
+            anyhow::ensure!(path.is_absolute(), "folder path must be absolute");
+            let path = fs.canonicalize(&path).await?;
+            anyhow::ensure!(
+                fs.metadata(&path)
+                    .await?
+                    .is_some_and(|metadata| metadata.is_dir),
+                "{} is not a folder",
+                path.display()
+            );
+            canonical_paths.push(path);
+        }
+        if !add {
+            let session = this.read_with(&cx, |this, _| this.session.clone());
+            session
+                .request(proto::OpenProjectFromTerminal {
+                    project_id: REMOTE_SERVER_PROJECT_ID,
+                    paths: canonical_paths
+                        .into_iter()
+                        .map(|path| path.to_string_lossy().into_owned())
+                        .collect(),
+                })
+                .await?;
+            return Ok(());
+        }
+        for path in canonical_paths {
+            this.update(&mut cx, |this, cx| {
+                this.worktree_store.update(cx, |store, cx| {
+                    store.find_or_create_worktree(path, true, cx)
+                })
+            })
+            .await?;
+        }
+        Ok(())
     }
 }
 

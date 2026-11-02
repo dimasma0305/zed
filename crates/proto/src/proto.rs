@@ -88,6 +88,7 @@ messages!(
     (DownloadFileByPath, Background),
     (DownloadFileResponse, Background),
     (ReadFileRange, Background),
+    (ApplyByteEdits, Background),
     (ReadFileRangeResponse, Background),
     (EndStream, Foreground),
     (Error, Foreground),
@@ -147,6 +148,7 @@ messages!(
     (GetSignatureHelpResponse, Background),
     (GetTerminalShell, Background),
     (GetTerminalShellResponse, Background),
+    (OpenProjectFromTerminal, Foreground),
     (GetTypeDefinition, Background),
     (GetTypeDefinitionResponse, Background),
     (GetImplementation, Background),
@@ -453,6 +455,7 @@ request_messages!(
     (RestoreProjectEntry, RestoreProjectEntryResponse),
     (DownloadFileByPath, DownloadFileResponse),
     (ReadFileRange, ReadFileRangeResponse),
+    (ApplyByteEdits, Ack),
     (ExpandProjectEntry, ExpandProjectEntryResponse),
     (ExpandAllForProjectEntry, ExpandAllForProjectEntryResponse),
     (Follow, FollowResponse),
@@ -645,6 +648,7 @@ request_messages!(
     (GitClone, GitCloneResponse),
     (GetDirectoryEnvironment, DirectoryEnvironment),
     (GetTerminalShell, GetTerminalShellResponse),
+    (OpenProjectFromTerminal, Ack),
     (GetProcesses, GetProcessesResponse),
     (GetAgentServerCommand, AgentServerCommand),
     (GetContextServerCommand, ContextServerCommand),
@@ -845,6 +849,7 @@ entity_messages!(
     ToggleLspLogs,
     GetDirectoryEnvironment,
     GetTerminalShell,
+    OpenProjectFromTerminal,
 
     Push,
     Fetch,
@@ -897,6 +902,7 @@ entity_messages!(
     FindSearchCandidatesCancelled,
     DownloadFileByPath,
     ReadFileRange,
+    ApplyByteEdits,
     GetRemoteProfilingData
 );
 

@@ -278,6 +278,142 @@ async fn test_remote_auto_fetch(cx: &mut TestAppContext, server_cx: &mut TestApp
 }
 
 #[gpui::test]
+async fn test_terminal_cli_adds_folders_to_connected_project(
+    cx: &mut TestAppContext,
+    server_cx: &mut TestAppContext,
+) {
+    let fs = FakeFs::new(server_cx.executor());
+    fs.insert_tree(
+        path!("/cli-folders"),
+        json!({
+            "first": {"one.txt": "one"},
+            "with spaces": {"two.txt": "two"},
+            "file.txt": "not a folder"
+        }),
+    )
+    .await;
+    let (project, headless) = init_test(&fs, cx, server_cx).await;
+    for paths in [
+        vec![path!("/cli-folders/first").to_string()],
+        vec![
+            path!("/cli-folders/first").to_string(),
+            path!("/cli-folders/with spaces").to_string(),
+        ],
+    ] {
+        HeadlessProject::open_terminal_folders(headless.clone(), paths, true, server_cx.to_async())
+            .await
+            .unwrap();
+        cx.run_until_parked();
+    }
+    project.read_with(cx, |project, cx| {
+        let paths = project
+            .visible_worktrees(cx)
+            .map(|worktree| worktree.read(cx).abs_path().to_path_buf())
+            .collect::<Vec<_>>();
+        assert_eq!(
+            paths,
+            vec![
+                PathBuf::from(path!("/cli-folders/first")),
+                PathBuf::from(path!("/cli-folders/with spaces"))
+            ]
+        );
+    });
+    for paths in [
+        vec![],
+        vec!["relative".into()],
+        vec![path!("/cli-folders/file.txt").into()],
+        vec![path!("/cli-folders/missing").into()],
+    ] {
+        assert!(
+            HeadlessProject::open_terminal_folders(
+                headless.clone(),
+                paths,
+                true,
+                server_cx.to_async()
+            )
+            .await
+            .is_err()
+        );
+    }
+    cx.run_until_parked();
+    project.read_with(cx, |project, cx| {
+        assert_eq!(project.visible_worktrees(cx).count(), 2)
+    });
+}
+
+#[gpui::test]
+async fn test_terminal_cli_opens_a_separate_project_without_adding_worktrees(
+    cx: &mut TestAppContext,
+    server_cx: &mut TestAppContext,
+) {
+    let fs = FakeFs::new(server_cx.executor());
+    fs.insert_tree(path!("/cli-projects"), json!({"original": {}, "other": {}}))
+        .await;
+    let (project, headless) = init_test(&fs, cx, server_cx).await;
+    HeadlessProject::open_terminal_folders(
+        headless.clone(),
+        vec![path!("/cli-projects/original").into()],
+        true,
+        server_cx.to_async(),
+    )
+    .await
+    .unwrap();
+    cx.run_until_parked();
+    let requests = Rc::new(RefCell::new(Vec::new()));
+    let subscription = cx.update(|cx| {
+        let requests = requests.clone();
+        cx.subscribe(&project, move |_, event, _| {
+            if let project::Event::OpenProjectFromTerminal(request) = event {
+                requests.borrow_mut().push(request.paths.clone());
+                request.clone().respond(Ok(()));
+            }
+        })
+    });
+    HeadlessProject::open_terminal_folders(
+        headless.clone(),
+        vec![path!("/cli-projects/other").into()],
+        false,
+        server_cx.to_async(),
+    )
+    .await
+    .unwrap();
+    cx.run_until_parked();
+    assert_eq!(
+        *requests.borrow(),
+        vec![vec![PathBuf::from(path!("/cli-projects/other"))]]
+    );
+    project.read_with(cx, |project, cx| {
+        assert_eq!(
+            project
+                .visible_worktrees(cx)
+                .map(|worktree| worktree.read(cx).abs_path().to_path_buf())
+                .collect::<Vec<_>>(),
+            vec![PathBuf::from(path!("/cli-projects/original"))]
+        );
+    });
+    drop(subscription);
+    let subscription = cx.update(|cx| {
+        cx.subscribe(&project, |_, event, _| {
+            if let project::Event::OpenProjectFromTerminal(request) = event {
+                request
+                    .clone()
+                    .respond(Err("fixture: opening project failed".into()));
+            }
+        })
+    });
+    let error = HeadlessProject::open_terminal_folders(
+        headless,
+        vec![path!("/cli-projects/other").into()],
+        false,
+        server_cx.to_async(),
+    )
+    .await
+    .unwrap_err();
+    assert!(format!("{error:#}").contains("fixture: opening project failed"));
+    drop(subscription);
+}
+
+#[gpui::test]
 async fn test_basic_remote_editing(cx: &mut TestAppContext, server_cx: &mut TestAppContext) {
     let fs = FakeFs::new(server_cx.executor());
     fs.insert_tree(
@@ -983,6 +1119,93 @@ async fn test_remote_binary_ranges_and_cancellation_capacity(
         .await
         .unwrap();
     assert_eq!(retry.data, bytes[16..48]);
+}
+
+#[gpui::test(iterations = 5)]
+async fn test_remote_binary_byte_edits_save_retry_conflict_and_containment(
+    cx: &mut TestAppContext,
+    server_cx: &mut TestAppContext,
+) {
+    let (fs, project, path) = remote_pdf_project(cx, server_cx).await;
+    let file = path!("/code/pdf-test/edit.bin");
+    fs.insert_file(file, vec![0, 1, 2, 255]).await;
+    let path = ProjectPath {
+        path: rel_path("edit.bin").into(),
+        ..path
+    };
+    let edits = vec![fs::ByteEdit {
+        offset: 1,
+        original: vec![1, 2],
+        replacement: vec![9, 8],
+    }];
+    for _ in 0..2 {
+        project
+            .update(cx, |project, cx| {
+                project.apply_byte_edits(path.clone(), 4, edits.clone(), cx)
+            })
+            .await
+            .unwrap();
+    }
+    assert_eq!(
+        fs.load_bytes(Path::new(file)).await.unwrap(),
+        [0, 9, 8, 255]
+    );
+    fs.insert_file(file, vec![0, 7, 8, 255]).await;
+    assert!(
+        project
+            .update(cx, |project, cx| project.apply_byte_edits(
+                path.clone(),
+                4,
+                edits.clone(),
+                cx
+            ))
+            .await
+            .is_err()
+    );
+    assert_eq!(
+        fs.load_bytes(Path::new(file)).await.unwrap(),
+        [0, 7, 8, 255]
+    );
+    let client = project.read_with(cx, |project, cx| {
+        project.remote_client().unwrap().read(cx).proto_client()
+    });
+    fs.insert_file(path!("/code/outside.bin"), vec![0, 1, 2, 3])
+        .await;
+    fs.insert_symlink(
+        path!("/code/pdf-test/outside.bin"),
+        PathBuf::from(path!("/code/outside.bin")),
+    )
+    .await;
+    for (relative, offset, original, replacement) in [
+        ("edit.bin", 4, vec![0], vec![9]),
+        ("edit.bin", 0, vec![0], vec![9, 8]),
+        ("../outside.bin", 0, vec![0], vec![9]),
+        ("outside.bin", 0, vec![0], vec![9]),
+        ("missing.bin", 0, vec![0], vec![9]),
+    ] {
+        assert!(
+            client
+                .request(proto::ApplyByteEdits {
+                    project_id: proto::REMOTE_SERVER_PROJECT_ID,
+                    worktree_id: path.worktree_id.to_proto(),
+                    path: relative.into(),
+                    file_size: 4,
+                    edits: vec![proto::BinaryByteEdit {
+                        offset,
+                        original,
+                        replacement
+                    }],
+                })
+                .await
+                .is_err()
+        );
+    }
+    assert_eq!(
+        fs.load_bytes(Path::new(path!("/code/outside.bin")))
+            .await
+            .unwrap(),
+        [0, 1, 2, 3]
+    );
 }
 
 #[gpui::test(iterations = 5)]

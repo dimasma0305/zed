@@ -22,6 +22,16 @@ struct Cli {
 }
 
 fn main() -> anyhow::Result<()> {
+    #[cfg(unix)]
+    if std::env::args_os()
+        .next()
+        .as_deref()
+        .map(std::path::Path::new)
+        .and_then(std::path::Path::file_name)
+        == Some(std::ffi::OsStr::new("zed"))
+    {
+        return remote_server::terminal_cli::run();
+    }
     let cli = Cli::parse();
 
     if let Some(socket_path) = &cli.askpass {

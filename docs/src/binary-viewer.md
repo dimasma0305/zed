@@ -1,13 +1,13 @@
 ---
 title: Binary Viewer
-description: Inspect local and SSH file bytes in read-only, paged Zed tabs.
+description: Inspect and overwrite local and SSH file bytes in paged Zed tabs.
 ---
 
 # Binary Viewer
 
 Open a binary file from the Project Panel, file finder, file open dialog, or
 command line. This fork opens files that its text reader identifies as binary in
-a read-only viewer. PDFs and supported images keep their dedicated viewers.
+a viewer with optional byte editing. PDFs and supported images keep their dedicated viewers.
 Files above the text editor's 6 GiB limit also open in the paged viewer.
 
 To inspect the saved bytes of any open file, run
@@ -21,8 +21,9 @@ The viewer loads at most 64 KiB at a time. **Hex + ASCII** shows 16 bytes per
 row, with a hexadecimal absolute byte offset and a printable ASCII column.
 Nonprintable bytes appear as dots in the ASCII column.
 
-Use **First**, **Previous**, **Next**, and **Last** to change pages. **Go to
-Offset** accepts a decimal byte offset or a hexadecimal value starting with
+The pane toolbar uses the same breadcrumbs and compact controls as the image
+and PDF viewers. Use the arrows to change pages, or the **First Page** and
+**Last Page** commands. Click the offset to go to a byte. **Go to Offset** accepts a decimal byte offset or a hexadecimal value starting with
 `0x`. Press `Enter` to confirm or `Escape` to cancel. **Reload** rereads the
 current page and checks the file size. **First** returns to offset zero if a
 file shrinks past the current position.
@@ -37,7 +38,7 @@ file shrinks past the current position.
 | {#action binary_viewer::Reload}       | {#kb binary_viewer::Reload}       |
 
 Scroll within the current page as you would in an editor. Select and copy
-displayed text. Split a tab to inspect different offsets independently. The
+hexadecimal byte pairs, or displayed text in Text mode. Split a tab to inspect different offsets independently. The
 file path, offset, display mode and encoding are saved for project restoration;
 file contents are not saved to the workspace database.
 
@@ -52,7 +53,38 @@ characters and directional formatting controls appear as explicit Unicode
 escapes. Invalid encoded sequences use replacement characters. A multibyte
 character split at a page boundary can also appear as a replacement character;
 use **Go to Offset** to inspect a range containing the complete character. Hex
-mode always shows the original bytes.
+mode shows the bytes with any pending edits applied.
+
+## Edit bytes
+
+Click the pencil in the toolbar or run {#action binary_viewer::ToggleEditing}
+to enable overwrite mode. Click a hexadecimal byte and type two hexadecimal
+digits. Each digit updates one nibble; the caret advances to the next byte.
+The ASCII column reflects the same bytes. Text mode is a read-only decoding.
+
+Paste hexadecimal pairs such as `00 FF 2A` using {#kb binary_viewer::Paste}.
+Whitespace is allowed. Invalid characters, incomplete pairs and pastes beyond
+the loaded page show an error without changing bytes. Editing preserves file
+length; insertion and deletion are not supported.
+
+Use the toolbar's undo and redo controls or {#kb binary_viewer::Undo} and
+{#kb binary_viewer::Redo}. Zed shows the normal unsaved tab marker. Save with
+{#kb workspace::Save}, and use the normal Save/Discard/Cancel prompt when closing a dirty tab.
+The normal autosave setting applies. Split tabs share pending byte edits and
+undo history, while their offsets remain independent. Reload asks before
+throwing away pending edits.
+
+Up to 64 KiB of changed bytes can be pending at once. Save before making more
+changes. Saving streams the file through a temporary file in the same directory,
+checks its size and the original bytes at changed offsets, then replaces the
+original. It needs enough free disk space for a complete temporary copy.
+A conflict or failed save leaves pending edits available and shows an error.
+Edits that already match the replacement bytes can be retried after a lost SSH
+response. Undo remains available after saving. Undo history is bounded.
+
+Pending edits survive page navigation and a remote disconnect, but are held in
+memory. They are not a crash recovery backup; save work before ending a session.
+Saving requires write access to the file and its parent directory.
 
 ## Local and SSH projects
 
@@ -69,7 +101,7 @@ The protocol permits at most 256 KiB per read and four simultaneous reads per
 project connection. Loading has a 120-second timeout and shows an error with
 a retry path when the file is missing, inaccessible or changes during a read.
 
-The viewer has no save or execute operation. Encodings do not launch tools,
+The viewer never executes file contents. Encodings do not launch tools,
 scripts, plugins or interpreters. It provides raw byte inspection rather than
 file format parsing, decompilation or a whole-file search index.
 

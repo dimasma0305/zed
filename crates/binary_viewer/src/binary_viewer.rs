@@ -1,24 +1,33 @@
+mod edit_history;
+
+use edit_history::{EditHistory, parse_hex};
 use std::{fmt::Write as _, path::PathBuf, time::Duration};
 
 use anyhow::{Context as _, Result};
 use editor::Editor;
 use file_icons::FileIcons;
-use futures::future;
-use gpui::{Entity, EventEmitter, FocusHandle, Focusable, Render, Task, WeakEntity, actions};
+use futures::{FutureExt as _, future};
+use gpui::{
+    ClipboardItem, Entity, EventEmitter, FocusHandle, Focusable, KeyDownEvent, PromptLevel, Render,
+    Task, WeakEntity, actions,
+};
 use language::{Buffer, Capability, language_settings::SoftWrap};
 use project::{Project, ProjectEntryId, ProjectPath};
 use settings::Settings as _;
-use ui::{ContextMenu, DropdownMenu, prelude::*};
+use ui::{ContextMenu, DropdownMenu, Tooltip, prelude::*};
 use util::ResultExt as _;
 use workspace::{
-    ItemId, ItemSettings, Pane, Workspace, WorkspaceId, delete_unloaded_items,
-    item::{Item, ItemBufferKind, ItemEvent, ProjectItem, SerializableItem},
+    ItemId, ItemSettings, Pane, ToolbarItemEvent, ToolbarItemLocation, ToolbarItemView, Workspace,
+    WorkspaceId, delete_unloaded_items,
+    item::{
+        Item, ItemBufferKind, ItemEvent, ItemHandle, ProjectItem, SaveOptions, SerializableItem,
+    },
 };
 
 actions!(
     binary_viewer,
     [
-        /// Inspect the active file's saved bytes in a read-only binary tab.
+        /// Inspect the active file's saved bytes in a separate binary tab.
         OpenInBinaryViewer,
         /// Read the next 64 KiB of the file.
         NextPage,
@@ -32,6 +41,16 @@ actions!(
         GoToOffset,
         /// Reload the file's saved bytes.
         Reload,
+        /// Enable or disable byte overwrite editing.
+        ToggleEditing,
+        /// Undo the last byte edit.
+        Undo,
+        /// Redo the last byte edit.
+        Redo,
+        /// Copy selected bytes as hexadecimal pairs.
+        Copy,
+        /// Overwrite bytes with hexadecimal pairs from the clipboard.
+        Paste,
     ]
 );
 
@@ -170,9 +189,21 @@ pub struct BinaryDocument {
     entry_id: Option<ProjectEntryId>,
     entry: Option<worktree::Entry>,
     deleted: bool,
+    edits: EditHistory,
+    file_size: Option<u64>,
+    saving: bool,
+    save_task: Option<future::Shared<Task<Result<(), std::sync::Arc<anyhow::Error>>>>>,
+    conflict: bool,
 }
 
-impl EventEmitter<()> for BinaryDocument {}
+pub enum BinaryDocumentEvent {
+    FileChanged,
+    Edited,
+    Saved,
+    StateChanged,
+}
+
+impl EventEmitter<BinaryDocumentEvent> for BinaryDocument {}
 
 impl BinaryDocument {
     fn new(project: &Entity<Project>, path: ProjectPath, cx: &mut Context<Self>) -> Self {
@@ -209,7 +240,13 @@ impl BinaryDocument {
                     }
                     this.deleted = entry.is_none();
                     this.entry = entry;
-                    cx.emit(());
+                    if !this.saving {
+                        this.conflict = this.edits.is_dirty();
+                        if !this.conflict {
+                            this.edits = EditHistory::default();
+                        }
+                    }
+                    cx.emit(BinaryDocumentEvent::FileChanged);
                 }
             })
             .detach();
@@ -219,6 +256,11 @@ impl BinaryDocument {
             entry_id: entry.as_ref().map(|entry| entry.id),
             entry,
             deleted: false,
+            edits: EditHistory::default(),
+            file_size: None,
+            saving: false,
+            save_task: None,
+            conflict: false,
         }
     }
 }
@@ -241,13 +283,14 @@ impl project::ProjectItem for BinaryDocument {
         Some(self.path.clone())
     }
     fn is_dirty(&self) -> bool {
-        false
+        self.edits.is_dirty()
     }
 }
 
 pub enum BinaryViewEvent {
     TitleChanged,
     Navigated,
+    Edited,
 }
 
 pub struct BinaryView {
@@ -264,6 +307,8 @@ pub struct BinaryView {
     loading: bool,
     generation: u64,
     load_task: Option<Task<()>>,
+    editing: bool,
+    edit_error: Option<SharedString>,
 }
 
 #[cfg(any(test, feature = "test-support"))]
@@ -295,8 +340,20 @@ impl BinaryView {
         window: &mut Window,
         cx: &mut Context<Self>,
     ) -> Self {
-        cx.subscribe_in(&document, window, |this, _, _, window, cx| {
-            this.load(window, cx);
+        cx.subscribe_in(&document, window, |this, document, event, window, cx| {
+            match event {
+                BinaryDocumentEvent::Edited => {
+                    this.update_text(window, cx);
+                    cx.emit(BinaryViewEvent::Edited);
+                }
+                BinaryDocumentEvent::Saved => this.load(window, cx),
+                BinaryDocumentEvent::FileChanged
+                    if !document.read(cx).edits.is_dirty() && !document.read(cx).saving =>
+                {
+                    this.load(window, cx)
+                }
+                _ => cx.notify(),
+            }
             cx.emit(BinaryViewEvent::TitleChanged);
         })
         .detach();
@@ -346,6 +403,8 @@ impl BinaryView {
             loading: false,
             generation: 0,
             load_task: None,
+            editing: false,
+            edit_error: None,
         };
         view.load(window, cx);
         view
@@ -408,6 +467,11 @@ impl BinaryView {
                 match result {
                     Ok(range) => {
                         this.file_size = Some(range.file_size);
+                        this.document.update(cx, |document, _| {
+                            if !document.edits.is_dirty() {
+                                document.file_size = Some(range.file_size);
+                            }
+                        });
                         this.bytes = range.data;
                         this.update_text(window, cx);
                     }
@@ -426,8 +490,9 @@ impl BinaryView {
         if self.loading || self.error.is_some() {
             return;
         }
+        let bytes = self.display_bytes(cx);
         let text = match self.state.mode {
-            ViewMode::Hex => match hex_text(&self.bytes, self.state.offset) {
+            ViewMode::Hex => match hex_text(&bytes, self.state.offset) {
                 Ok(text) => text,
                 Err(error) => {
                     self.error = Some(error.to_string().into());
@@ -435,18 +500,66 @@ impl BinaryView {
                     return;
                 }
             },
-            ViewMode::Text => self.state.encoding.decode(&self.bytes, self.state.offset),
+            ViewMode::Text => self.state.encoding.decode(&bytes, self.state.offset),
         };
         let focused = self.focus_handle.is_focused(window)
             || self
                 .editor
                 .as_ref()
                 .is_some_and(|editor| editor.focus_handle(cx).contains_focused(window, cx));
-        let buffer = cx.new(|cx| {
-            let mut buffer = Buffer::local(text, cx);
-            buffer.set_capability(Capability::ReadOnly, cx);
-            buffer
-        });
+        if let Some(editor) = self.editor.as_ref() {
+            editor.update(cx, |editor, cx| {
+                let selection = editor
+                    .selections
+                    .newest::<text::Point>(&editor.display_snapshot(cx));
+                let previous = editor.text(cx);
+                if previous == text {
+                    return;
+                }
+                let mut prefix = previous
+                    .bytes()
+                    .zip(text.bytes())
+                    .take_while(|(left, right)| left == right)
+                    .count();
+                while !previous.is_char_boundary(prefix) || !text.is_char_boundary(prefix) {
+                    prefix -= 1;
+                }
+                let mut suffix = previous[prefix..]
+                    .bytes()
+                    .rev()
+                    .zip(text[prefix..].bytes().rev())
+                    .take_while(|(left, right)| left == right)
+                    .count();
+                while !previous.is_char_boundary(previous.len() - suffix)
+                    || !text.is_char_boundary(text.len() - suffix)
+                {
+                    suffix -= 1;
+                }
+                if let Some(buffer) = editor.buffer().read(cx).as_singleton() {
+                    buffer.update(cx, |buffer, cx| {
+                        buffer.edit(
+                            [(
+                                prefix..previous.len() - suffix,
+                                &text[prefix..text.len() - suffix],
+                            )],
+                            None,
+                            cx,
+                        );
+                    });
+                }
+                let snapshot = editor.buffer().read(cx).snapshot(cx);
+                let start = snapshot.clip_point(selection.start, text::Bias::Left);
+                let end = snapshot.clip_point(selection.end, text::Bias::Right);
+                editor.change_selections(
+                    editor::SelectionEffects::no_scroll(),
+                    window,
+                    cx,
+                    |selections| selections.select_ranges([start..end]),
+                );
+            });
+            return;
+        }
+        let buffer = cx.new(|cx| Buffer::local(text, cx));
         let editor = cx.new(|cx| {
             let mut editor = Editor::for_buffer(buffer, None, window, cx);
             editor.set_read_only(true);
@@ -500,7 +613,24 @@ impl BinaryView {
     }
 
     fn reload(&mut self, _: &Reload, window: &mut Window, cx: &mut Context<Self>) {
-        self.load(window, cx);
+        if !self.document.read(cx).edits.is_dirty() {
+            self.discard_edits(window, cx);
+            return;
+        }
+        let answer = window.prompt(
+            PromptLevel::Warning,
+            "Discard unsaved byte edits?",
+            Some("Reload reads the current file from disk."),
+            &["Discard", "Cancel"],
+            cx,
+        );
+        cx.spawn_in(window, async move |this, cx| {
+            if matches!(answer.await, Ok(0)) {
+                this.update_in(cx, |this, window, cx| this.discard_edits(window, cx))
+                    .log_err();
+            }
+        })
+        .detach();
     }
 
     fn go_to_offset(&mut self, _: &GoToOffset, window: &mut Window, cx: &mut Context<Self>) {
@@ -545,6 +675,313 @@ impl BinaryView {
         cx.notify();
     }
 
+    fn display_bytes(&self, cx: &App) -> Vec<u8> {
+        let mut bytes = self.bytes.clone();
+        self.document
+            .read(cx)
+            .edits
+            .overlay(self.state.offset, &mut bytes);
+        bytes
+    }
+
+    fn toggle_editing(&mut self, _: &ToggleEditing, window: &mut Window, cx: &mut Context<Self>) {
+        self.editing = !self.editing;
+        self.state.mode = ViewMode::Hex;
+        self.update_text(window, cx);
+        if let Some(editor) = self.editor.as_ref() {
+            editor.focus_handle(cx).focus(window, cx);
+        }
+        self.select_byte(0, false, window, cx);
+        cx.emit(BinaryViewEvent::TitleChanged);
+        cx.notify();
+    }
+
+    fn selection(&self, cx: &mut App) -> Option<text::Selection<text::Point>> {
+        self.editor.as_ref().map(|editor| {
+            editor.update(cx, |editor, cx| {
+                editor
+                    .selections
+                    .newest::<text::Point>(&editor.display_snapshot(cx))
+            })
+        })
+    }
+
+    fn byte_index(&self, point: text::Point) -> usize {
+        let column = point.column as usize;
+        let byte = if column >= 70 {
+            column - 70
+        } else if column >= 43 {
+            8 + (column - 43) / 3
+        } else {
+            column.saturating_sub(18) / 3
+        };
+        (point.row as usize * 16 + byte.min(15)).min(self.bytes.len())
+    }
+
+    fn select_byte(&self, index: usize, low_nibble: bool, window: &mut Window, cx: &mut App) {
+        let Some(editor) = self.editor.as_ref() else {
+            return;
+        };
+        if index >= self.bytes.len() {
+            return;
+        }
+        let column = index % 16;
+        let column = 18 + column * 3 + usize::from(column >= 8) + usize::from(low_nibble);
+        let start = text::Point::new((index / 16) as u32, column as u32);
+        let end = text::Point::new(start.row, start.column + if low_nibble { 1 } else { 2 });
+        editor.update(cx, |editor, cx| {
+            editor.change_selections(
+                editor::SelectionEffects::default(),
+                window,
+                cx,
+                |selections| {
+                    selections.select_ranges([start..end]);
+                },
+            )
+        });
+    }
+
+    fn replace_bytes(
+        &mut self,
+        index: usize,
+        replacement: &[u8],
+        cx: &mut Context<Self>,
+    ) -> Result<()> {
+        anyhow::ensure!(
+            self.editing
+                && self.state.mode == ViewMode::Hex
+                && !self.loading
+                && self.error.is_none(),
+            "Enable hex editing before changing bytes"
+        );
+        anyhow::ensure!(
+            !self.document.read(cx).saving,
+            "Wait for the current save to finish"
+        );
+        let bytes = self.display_bytes(cx);
+        let end = index
+            .checked_add(replacement.len())
+            .context("Byte range overflows")?;
+        let original = bytes
+            .get(index..end)
+            .context("Paste exceeds this page; file length is preserved")?;
+        let offset = self.state.offset + index as u64;
+        self.document.update(cx, |document, cx| {
+            document.edits.replace(offset, original, replacement)?;
+            cx.emit(BinaryDocumentEvent::Edited);
+            Ok(())
+        })
+    }
+
+    fn handle_hex_key(
+        &mut self,
+        event: &KeyDownEvent,
+        window: &mut Window,
+        cx: &mut Context<Self>,
+    ) {
+        if !self.editing
+            || self.state.mode != ViewMode::Hex
+            || self.loading
+            || self.document.read(cx).saving
+            || !self
+                .editor
+                .as_ref()
+                .is_some_and(|editor| editor.focus_handle(cx).contains_focused(window, cx))
+            || event.keystroke.modifiers.control
+            || event.keystroke.modifiers.platform
+            || event.keystroke.modifiers.alt
+        {
+            return;
+        }
+        let Some(digit) = event
+            .keystroke
+            .key_char
+            .as_deref()
+            .or(Some(event.keystroke.key.as_str()))
+            .filter(|text| text.len() == 1)
+            .and_then(|text| text.chars().next())
+            .filter(char::is_ascii_hexdigit)
+            .and_then(|character| character.to_digit(16))
+        else {
+            return;
+        };
+        let Some(selection) = self.selection(cx) else {
+            return;
+        };
+        let index = self.byte_index(selection.start);
+        let Some(byte) = self.display_bytes(cx).get(index).copied() else {
+            return;
+        };
+        let column = index % 16;
+        let first_column = 18 + column * 3 + usize::from(column >= 8);
+        let low_nibble = selection.start.column as usize == first_column + 1;
+        let replacement = if low_nibble {
+            (byte & 0xf0) | digit as u8
+        } else {
+            (byte & 0x0f) | ((digit as u8) << 4)
+        };
+        match self.replace_bytes(index, &[replacement], cx) {
+            Ok(()) => {
+                self.edit_error = None;
+                self.update_text(window, cx);
+                self.select_byte(
+                    if low_nibble {
+                        (index + 1).min(self.bytes.len().saturating_sub(1))
+                    } else {
+                        index
+                    },
+                    !low_nibble,
+                    window,
+                    cx,
+                );
+            }
+            Err(error) => self.edit_error = Some(error.to_string().into()),
+        }
+        cx.stop_propagation();
+        cx.notify();
+    }
+
+    fn undo_edit(&mut self, _: &Undo, window: &mut Window, cx: &mut Context<Self>) {
+        if self.document.read(cx).saving {
+            return;
+        }
+        let result = self.document.update(cx, |document, cx| {
+            document.edits.undo()?;
+            cx.emit(BinaryDocumentEvent::Edited);
+            Ok::<_, anyhow::Error>(())
+        });
+        self.edit_error = result.err().map(|error| error.to_string().into());
+        self.update_text(window, cx);
+    }
+
+    fn redo_edit(&mut self, _: &Redo, window: &mut Window, cx: &mut Context<Self>) {
+        if self.document.read(cx).saving {
+            return;
+        }
+        let result = self.document.update(cx, |document, cx| {
+            document.edits.redo()?;
+            cx.emit(BinaryDocumentEvent::Edited);
+            Ok::<_, anyhow::Error>(())
+        });
+        self.edit_error = result.err().map(|error| error.to_string().into());
+        self.update_text(window, cx);
+    }
+
+    fn copy_bytes(&mut self, _: &Copy, _: &mut Window, cx: &mut Context<Self>) {
+        let Some(selection) = self.selection(cx) else {
+            return;
+        };
+        let start = self.byte_index(selection.start);
+        let mut end = self.byte_index(selection.end);
+        let column = selection.end.column as usize;
+        let inside_byte = if column >= 70 {
+            false
+        } else if column >= 43 {
+            (column - 43) % 3 != 0
+        } else {
+            column > 18 && (column - 18) % 3 != 0
+        };
+        if inside_byte || start == end {
+            end = end.saturating_add(1);
+        }
+        let bytes = self.display_bytes(cx);
+        if let Some(bytes) = bytes.get(start..end.min(bytes.len())) {
+            let text = bytes
+                .iter()
+                .map(|byte| format!("{byte:02X}"))
+                .collect::<Vec<_>>()
+                .join(" ");
+            cx.write_to_clipboard(ClipboardItem::new_string(text));
+        }
+    }
+
+    fn paste_bytes(&mut self, _: &Paste, window: &mut Window, cx: &mut Context<Self>) {
+        let Some(selection) = self.selection(cx) else {
+            return;
+        };
+        let Some(text) = cx.read_from_clipboard().and_then(|item| item.text()) else {
+            return;
+        };
+        let index = self.byte_index(selection.start);
+        match parse_hex(&text).and_then(|bytes| self.replace_bytes(index, &bytes, cx)) {
+            Ok(()) => {
+                self.edit_error = None;
+                self.update_text(window, cx);
+                self.select_byte(index, false, window, cx);
+            }
+            Err(error) => self.edit_error = Some(error.to_string().into()),
+        }
+        cx.notify();
+    }
+
+    fn discard_edits(&mut self, _window: &mut Window, cx: &mut Context<Self>) {
+        if self.document.read(cx).saving {
+            return;
+        }
+        self.document.update(cx, |document, cx| {
+            document.edits = EditHistory::default();
+            document.conflict = false;
+            cx.emit(BinaryDocumentEvent::Saved);
+        });
+        self.edit_error = None;
+        cx.notify();
+    }
+
+    fn save_edits(&mut self, cx: &mut Context<Self>) -> Task<Result<()>> {
+        let document = self.document.read(cx);
+        if !document.edits.is_dirty() {
+            return Task::ready(Ok(()));
+        }
+        if document.saving
+            && let Some(save) = document.save_task.clone()
+        {
+            return cx.background_spawn(async move {
+                save.await.map_err(|error| anyhow::anyhow!("{error:#}"))
+            });
+        }
+        let Some(size) = document.file_size else {
+            return Task::ready(Err(anyhow::anyhow!("Reload the file before saving")));
+        };
+        let path = document.path.clone();
+        let edits = document.edits.edits();
+        self.document.update(cx, |document, cx| {
+            document.saving = true;
+            cx.emit(BinaryDocumentEvent::StateChanged);
+        });
+        self.edit_error = None;
+        let save = self.project.update(cx, |project, cx| {
+            project.apply_byte_edits(path, size, edits, cx)
+        });
+        let document = self.document.clone();
+        let save = cx
+            .spawn(async move |this, cx| {
+                let result = save.await;
+                document.update(cx, |document, cx| {
+                    document.saving = false;
+                    if result.is_ok() {
+                        document.edits.saved();
+                        document.conflict = false;
+                        cx.emit(BinaryDocumentEvent::Saved);
+                    } else {
+                        document.conflict = true;
+                        cx.emit(BinaryDocumentEvent::StateChanged);
+                    }
+                });
+                if let Err(error) = &result {
+                    this.update(cx, |this, cx| {
+                        this.edit_error = Some(format!("{error:#}").into());
+                        cx.notify();
+                    })
+                    .log_err();
+                }
+                result.map_err(std::sync::Arc::new)
+            })
+            .shared();
+        self.document
+            .update(cx, |document, _| document.save_task = Some(save.clone()));
+        cx.background_spawn(async move { save.await.map_err(|error| anyhow::anyhow!("{error:#}")) })
+    }
+
     fn absolute_path(&self, cx: &App) -> Option<PathBuf> {
         self.project
             .read(cx)
@@ -563,8 +1000,8 @@ impl Focusable for BinaryView {
     }
 }
 
-impl Render for BinaryView {
-    fn render(&mut self, window: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
+impl BinaryView {
+    fn render_toolbar(&mut self, window: &mut Window, cx: &mut Context<Self>) -> AnyElement {
         let this = cx.entity();
         let selected_encoding = self.state.encoding;
         let encoding_menu = ContextMenu::build(window, cx, move |mut menu, _, _| {
@@ -585,143 +1022,200 @@ impl Render for BinaryView {
             }
             menu
         });
-        let range_label = match self.file_size {
-            Some(size) => format!(
-                "0x{:X} · {} bytes shown / {size} bytes",
-                self.state.offset,
-                self.bytes.len()
-            ),
-            None => format!("Offset 0x{:X}", self.state.offset),
-        };
-        v_flex()
+        let document = self.document.read(cx);
+        let saving = document.saving;
+        let can_undo = document.edits.can_undo();
+        let can_redo = document.edits.can_redo();
+        h_flex()
             .key_context("BinaryViewer")
-            .track_focus(&self.focus_handle)
-            .size_full()
-            .bg(cx.theme().colors().editor_background)
-            .on_action(cx.listener(Self::next_page))
-            .on_action(cx.listener(Self::previous_page))
-            .on_action(cx.listener(Self::first_page))
-            .on_action(cx.listener(Self::last_page))
-            .on_action(cx.listener(Self::reload))
-            .on_action(cx.listener(Self::go_to_offset))
+            .gap_1()
             .on_action(cx.listener(Self::confirm_offset))
             .on_action(cx.listener(Self::cancel_offset))
             .child(
-                h_flex()
-                    .flex_wrap()
-                    .gap_2()
-                    .p_2()
-                    .border_b_1()
-                    .border_color(cx.theme().colors().border)
-                    .child(Label::new("Read-only").color(Color::Muted))
-                    .child(Button::new("binary-first", "First").on_click(
-                        cx.listener(|this, _, window, cx| this.first_page(&FirstPage, window, cx)),
-                    ))
-                    .child(
-                        Button::new("binary-previous", "Previous")
-                            .disabled(self.loading || self.state.offset == 0)
-                            .on_click(cx.listener(|this, _, window, cx| {
-                                this.previous_page(&PreviousPage, window, cx)
-                            })),
+                IconButton::new("binary-previous", IconName::ChevronLeft)
+                    .icon_size(IconSize::Small)
+                    .disabled(self.loading || self.state.offset == 0)
+                    .tooltip(|_, cx| Tooltip::for_action("Previous Page", &PreviousPage, cx))
+                    .on_click(cx.listener(|this, _, window, cx| {
+                        this.previous_page(&PreviousPage, window, cx)
+                    })),
+            )
+            .child(if let Some(editor) = self.offset_editor.clone() {
+                div()
+                    .key_context("BinaryOffsetInput")
+                    .w(px(130.0))
+                    .child(editor)
+                    .into_any_element()
+            } else {
+                Button::new("binary-offset", format!("0x{:X}", self.state.offset))
+                    .style(ButtonStyle::Subtle)
+                    .tooltip(|_, cx| Tooltip::for_action("Go to Byte Offset", &GoToOffset, cx))
+                    .on_click(
+                        cx.listener(|this, _, window, cx| {
+                            this.go_to_offset(&GoToOffset, window, cx)
+                        }),
                     )
-                    .child(
-                        Button::new("binary-next", "Next")
-                            .disabled(
-                                self.loading
-                                    || !self.file_size.is_some_and(|size| {
-                                        self.state.offset.saturating_add(PAGE_BYTES) < size
-                                    }),
-                            )
-                            .on_click(cx.listener(|this, _, window, cx| {
-                                this.next_page(&NextPage, window, cx)
-                            })),
+                    .into_any_element()
+            })
+            .child(
+                IconButton::new("binary-next", IconName::ChevronRight)
+                    .icon_size(IconSize::Small)
+                    .disabled(
+                        self.loading
+                            || !self.file_size.is_some_and(|size| {
+                                self.state.offset.saturating_add(PAGE_BYTES) < size
+                            }),
                     )
-                    .child(
-                        Button::new("binary-last", "Last")
-                            .disabled(self.file_size.is_none())
-                            .on_click(cx.listener(|this, _, window, cx| {
-                                this.last_page(&LastPage, window, cx)
-                            })),
-                    )
-                    .child(
-                        Button::new("binary-offset", "Go to Offset").on_click(cx.listener(
-                            |this, _, window, cx| this.go_to_offset(&GoToOffset, window, cx),
-                        )),
-                    )
-                    .child(
-                        Button::new("binary-hex", "Hex + ASCII")
-                            .toggle_state(self.state.mode == ViewMode::Hex)
-                            .on_click(cx.listener(|this, _, window, cx| {
-                                this.state.mode = ViewMode::Hex;
-                                this.update_text(window, cx);
-                            })),
-                    )
-                    .child(
-                        Button::new("binary-text", "Text")
-                            .toggle_state(self.state.mode == ViewMode::Text)
-                            .on_click(cx.listener(|this, _, window, cx| {
-                                this.state.mode = ViewMode::Text;
-                                this.update_text(window, cx);
-                            })),
-                    )
-                    .child(
-                        DropdownMenu::new(
-                            "binary-encoding",
-                            self.state.encoding.label(),
-                            encoding_menu,
-                        )
-                        .disabled(self.state.mode != ViewMode::Text),
-                    )
-                    .child(Button::new("binary-reload", "Reload").on_click(
-                        cx.listener(|this, _, window, cx| this.reload(&Reload, window, cx)),
-                    )),
+                    .tooltip(|_, cx| Tooltip::for_action("Next Page", &NextPage, cx))
+                    .on_click(
+                        cx.listener(|this, _, window, cx| this.next_page(&NextPage, window, cx)),
+                    ),
             )
             .child(
-                h_flex()
-                    .px_2()
-                    .py_1()
-                    .gap_2()
-                    .child(Label::new(range_label).size(LabelSize::Small))
-                    .when(self.state.mode == ViewMode::Text, |element| {
-                        element.child(
-                            Label::new("Text decodes this page; controls are escaped")
-                                .size(LabelSize::Small)
-                                .color(Color::Muted),
-                        )
-                    }),
+                Button::new("binary-hex", "Hex")
+                    .style(ButtonStyle::Subtle)
+                    .toggle_state(self.state.mode == ViewMode::Hex)
+                    .on_click(cx.listener(|this, _, window, cx| {
+                        this.state.mode = ViewMode::Hex;
+                        this.update_text(window, cx);
+                    })),
             )
-            .when_some(self.offset_editor.clone(), |element, editor| {
-                element.child(
-                    h_flex()
-                        .key_context("BinaryOffsetInput")
-                        .p_2()
-                        .gap_2()
-                        .child(Label::new("Byte offset:"))
-                        .child(div().w(px(240.0)).child(editor)),
-                )
+            .child(
+                Button::new("binary-text", "Text")
+                    .style(ButtonStyle::Subtle)
+                    .toggle_state(self.state.mode == ViewMode::Text)
+                    .on_click(cx.listener(|this, _, window, cx| {
+                        this.state.mode = ViewMode::Text;
+                        this.update_text(window, cx);
+                    })),
+            )
+            .when(self.state.mode == ViewMode::Text, |element| {
+                element.child(DropdownMenu::new(
+                    "binary-encoding",
+                    self.state.encoding.label(),
+                    encoding_menu,
+                ))
             })
-            .when_some(self.input_error.clone(), |element, error| {
-                element.child(Label::new(error).color(Color::Error))
+            .child(
+                IconButton::new("binary-edit", IconName::Pencil)
+                    .icon_size(IconSize::Small)
+                    .toggle_state(self.editing)
+                    .tooltip(|_, cx| {
+                        Tooltip::for_action("Toggle Byte Overwrite Editing", &ToggleEditing, cx)
+                    })
+                    .on_click(cx.listener(|this, _, window, cx| {
+                        this.toggle_editing(&ToggleEditing, window, cx)
+                    })),
+            )
+            .when(self.editing, |element| {
+                element
+                    .child(
+                        IconButton::new("binary-undo", IconName::Undo)
+                            .icon_size(IconSize::Small)
+                            .disabled(!can_undo || saving)
+                            .tooltip(|_, cx| Tooltip::for_action("Undo Byte Edit", &Undo, cx))
+                            .on_click(
+                                cx.listener(|this, _, window, cx| {
+                                    this.undo_edit(&Undo, window, cx)
+                                }),
+                            ),
+                    )
+                    .child(
+                        IconButton::new("binary-redo", IconName::RotateCw)
+                            .icon_size(IconSize::Small)
+                            .disabled(!can_redo || saving)
+                            .tooltip(|_, cx| Tooltip::for_action("Redo Byte Edit", &Redo, cx))
+                            .on_click(
+                                cx.listener(|this, _, window, cx| {
+                                    this.redo_edit(&Redo, window, cx)
+                                }),
+                            ),
+                    )
             })
-            .child(div().flex_1().min_h_0().size_full().child(
-                if let Some(error) = self.error.clone() {
-                    v_flex()
-                        .p_4()
-                        .gap_2()
-                        .child(Label::new("Unable to view file").color(Color::Error))
-                        .child(div().max_w(px(640.0)).child(error))
-                        .into_any_element()
-                } else if self.loading {
-                    div()
-                        .p_4()
-                        .child(Label::new("Loading file page…"))
-                        .into_any_element()
-                } else if let Some(editor) = self.editor.clone() {
-                    div().size_full().child(editor).into_any_element()
-                } else {
-                    div().into_any_element()
-                },
-            ))
+            .child(
+                IconButton::new("binary-reload", IconName::RotateCw)
+                    .icon_size(IconSize::Small)
+                    .disabled(saving)
+                    .tooltip(|_, cx| Tooltip::for_action("Reload File", &Reload, cx))
+                    .on_click(cx.listener(|this, _, window, cx| this.reload(&Reload, window, cx))),
+            )
+            .into_any_element()
+    }
+}
+
+impl Render for BinaryView {
+    fn render(&mut self, _: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
+        let document = self.document.read(cx);
+        let changed = document.edits.changed_bytes();
+        let status = if document.saving {
+            "Saving byte edits".to_string()
+        } else if changed > 0 {
+            format!("{changed} modified bytes")
+        } else if self.editing && self.state.mode == ViewMode::Hex {
+            "Overwrite mode - type hexadecimal pairs".to_string()
+        } else {
+            "Read-only".to_string()
+        };
+        let range = self
+            .file_size
+            .map(|size| format!("{} / {size} bytes", self.bytes.len()))
+            .unwrap_or_default();
+        v_flex().key_context("BinaryViewer").track_focus(&self.focus_handle).size_full()
+            .bg(cx.theme().colors().editor_background)
+            .capture_key_down(cx.listener(Self::handle_hex_key))
+            .on_action(cx.listener(Self::next_page)).on_action(cx.listener(Self::previous_page))
+            .on_action(cx.listener(Self::first_page)).on_action(cx.listener(Self::last_page))
+            .on_action(cx.listener(Self::reload)).on_action(cx.listener(Self::go_to_offset))
+            .on_action(cx.listener(Self::confirm_offset)).on_action(cx.listener(Self::cancel_offset))
+            .on_action(cx.listener(Self::toggle_editing)).on_action(cx.listener(Self::undo_edit))
+            .on_action(cx.listener(Self::redo_edit)).on_action(cx.listener(Self::copy_bytes))
+            .on_action(cx.listener(Self::paste_bytes))
+            .when_some(self.input_error.clone().or(self.edit_error.clone()), |element, error| element.child(div().p_2().child(Label::new(error).color(Color::Error))))
+            .when(document.conflict, |element| element.child(div().p_2().child(Label::new("File changed on disk. Save checks your modified bytes; Reload discards your edits.").color(Color::Warning))))
+            .child(div().flex_1().min_h_0().size_full().child(if let Some(error) = self.error.clone() {
+                v_flex().p_4().gap_2().child(Label::new("Unable to view file").color(Color::Error)).child(div().max_w(px(640.0)).child(error)).into_any_element()
+            } else if self.loading { div().p_4().child(Label::new("Loading file page...")).into_any_element()
+            } else if let Some(editor) = self.editor.clone() {
+                div().key_context(if self.state.mode == ViewMode::Hex { "BinaryHexEditor" } else { "BinaryTextPreview" }).size_full().child(editor).into_any_element()
+            } else { div().into_any_element() }))
+            .child(h_flex().px_2().py_1().justify_between()
+                .child(Label::new(status).size(LabelSize::Small).color(Color::Muted))
+                .child(Label::new(range).size(LabelSize::Small).color(Color::Muted)))
+    }
+}
+
+#[derive(Default)]
+pub struct BinaryViewToolbarControls {
+    view: Option<WeakEntity<BinaryView>>,
+    subscription: Option<gpui::Subscription>,
+}
+impl EventEmitter<ToolbarItemEvent> for BinaryViewToolbarControls {}
+impl ToolbarItemView for BinaryViewToolbarControls {
+    fn set_active_pane_item(
+        &mut self,
+        item: Option<&dyn ItemHandle>,
+        _: &mut Window,
+        cx: &mut Context<Self>,
+    ) -> ToolbarItemLocation {
+        self.view = None;
+        self.subscription = None;
+        if let Some(view) = item.and_then(|item| item.downcast::<BinaryView>()) {
+            self.subscription = Some(cx.observe(&view, |_, _, cx| cx.notify()));
+            self.view = Some(view.downgrade());
+            cx.notify();
+            ToolbarItemLocation::PrimaryRight
+        } else {
+            ToolbarItemLocation::Hidden
+        }
+    }
+}
+impl Render for BinaryViewToolbarControls {
+    fn render(&mut self, window: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
+        self.view
+            .as_ref()
+            .and_then(WeakEntity::upgrade)
+            .map(|view| view.update(cx, |view, cx| view.render_toolbar(window, cx)))
+            .unwrap_or_else(|| div().into_any_element())
     }
 }
 
@@ -759,12 +1253,54 @@ impl Item for BinaryView {
         callback(self.document.entity_id(), self.document.read(cx));
     }
     fn to_item_events(event: &Self::Event, callback: &mut dyn FnMut(ItemEvent)) {
-        if matches!(event, BinaryViewEvent::TitleChanged) {
-            callback(ItemEvent::UpdateTab);
+        match event {
+            BinaryViewEvent::TitleChanged => {
+                callback(ItemEvent::UpdateTab);
+                callback(ItemEvent::UpdateBreadcrumbs);
+            }
+            BinaryViewEvent::Edited => {
+                callback(ItemEvent::Edit);
+                callback(ItemEvent::UpdateTab);
+            }
+            BinaryViewEvent::Navigated => {}
         }
     }
-    fn capability(&self, _: &App) -> language::Capability {
-        language::Capability::ReadOnly
+    fn capability(&self, cx: &App) -> Capability {
+        if self.editing || self.is_dirty(cx) {
+            Capability::ReadWrite
+        } else {
+            Capability::ReadOnly
+        }
+    }
+    fn is_dirty(&self, cx: &App) -> bool {
+        self.document.read(cx).edits.is_dirty()
+    }
+    fn has_conflict(&self, cx: &App) -> bool {
+        self.document.read(cx).conflict
+    }
+    fn can_save(&self, cx: &App) -> bool {
+        self.editing || self.is_dirty(cx)
+    }
+    fn save(
+        &mut self,
+        _: SaveOptions,
+        _: Entity<Project>,
+        _: &mut Window,
+        cx: &mut Context<Self>,
+    ) -> Task<Result<()>> {
+        self.save_edits(cx)
+    }
+    fn reload(
+        &mut self,
+        _: Entity<Project>,
+        window: &mut Window,
+        cx: &mut Context<Self>,
+    ) -> Task<Result<()>> {
+        if self.document.read(cx).saving {
+            return Task::ready(Err(anyhow::anyhow!("Wait for the current save to finish")));
+        }
+        self.discard_edits(window, cx);
+        Task::ready(Ok(()))
     }
     fn buffer_kind(&self, _: &App) -> ItemBufferKind {
         // A saved-byte inspection must not replace an editor with unsaved changes.
@@ -773,6 +1309,33 @@ impl Item for BinaryView {
         } else {
             ItemBufferKind::Singleton
         }
+    }
+    fn breadcrumb_location(&self, cx: &App) -> ToolbarItemLocation {
+        if editor::EditorSettings::get_global(cx).toolbar.breadcrumbs {
+            ToolbarItemLocation::PrimaryLeft
+        } else {
+            ToolbarItemLocation::Hidden
+        }
+    }
+    fn breadcrumbs(
+        &self,
+        cx: &App,
+    ) -> Option<(Vec<language::HighlightedText>, Option<gpui::Font>)> {
+        let project = self.project.read(cx);
+        let document = self.document.read(cx);
+        let mut path = document.path.path.to_rel_path_buf();
+        if project.visible_worktrees(cx).count() > 1
+            && let Some(worktree) = project.worktree_for_id(document.path.worktree_id, cx)
+        {
+            path = worktree.read(cx).root_name().join(&path);
+        }
+        Some((
+            vec![language::HighlightedText {
+                text: path.display(project.path_style(cx)).to_string().into(),
+                highlights: vec![],
+            }],
+            None,
+        ))
     }
     fn can_split(&self) -> bool {
         true
@@ -950,6 +1513,32 @@ mod tests {
     use settings::SettingsStore;
     use std::path::Path;
 
+    struct TestViewer {
+        view: Entity<BinaryView>,
+    }
+    impl Render for TestViewer {
+        fn render(&mut self, window: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
+            let toolbar = self
+                .view
+                .update(cx, |view, cx| view.render_toolbar(window, cx));
+            v_flex()
+                .size_full()
+                .child(toolbar)
+                .child(div().flex_1().min_h_0().child(self.view.clone()))
+        }
+    }
+    fn add_view(
+        cx: &mut TestAppContext,
+        build: impl FnOnce(&mut Window, &mut Context<BinaryView>) -> BinaryView,
+    ) -> (Entity<BinaryView>, &mut VisualTestContext) {
+        let (host, cx) = cx.add_window_view(|window, cx| {
+            let view = cx.new(|cx| build(window, cx));
+            cx.observe(&view, |_, _, cx| cx.notify()).detach();
+            TestViewer { view }
+        });
+        (host.read_with(cx, |host, _| host.view.clone()), cx)
+    }
+
     async fn open_file(
         bytes: &[u8],
         cx: &mut TestAppContext,
@@ -1028,7 +1617,7 @@ mod tests {
             .map(|index| (index % 251) as u8)
             .collect::<Vec<_>>();
         let (project, document, _) = open_file(&bytes, cx).await;
-        let (view, cx) = cx.add_window_view(|window, cx| {
+        let (view, cx) = add_view(cx, |window, cx| {
             BinaryView::new(
                 document,
                 project,
@@ -1119,7 +1708,7 @@ mod tests {
             .map(|index| (index % 251) as u8)
             .collect::<Vec<_>>();
         let (project, document, _) = open_file(&bytes, cx).await;
-        let (view, cx) = cx.add_window_view(|window, cx| {
+        let (view, cx) = add_view(cx, |window, cx| {
             BinaryView::new(document, project, ViewState::default(), window, cx)
         });
         draw(cx);
@@ -1170,6 +1759,115 @@ mod tests {
             assert_eq!(view.bytes.len(), 7);
             assert!(view.error.is_none() && !view.loading);
         });
+    }
+
+    #[gpui::test(iterations = 5)]
+    async fn hex_keyboard_paste_undo_save_and_shared_splits(cx: &mut TestAppContext) {
+        let (project, document, fs) = open_file(&[0, 1, 2, 255], cx).await;
+        let (view, cx) = add_view(cx, |window, cx| {
+            BinaryView::new(document, project, ViewState::default(), window, cx)
+        });
+        draw(cx);
+        view.update_in(cx, |view, window, cx| {
+            view.toggle_editing(&ToggleEditing, window, cx)
+        });
+        draw(cx);
+        cx.simulate_keystrokes("a b");
+        draw(cx);
+        assert_eq!(
+            view.read_with(cx, |view, cx| view.display_bytes(cx)),
+            [0xab, 1, 2, 255]
+        );
+        view.read_with(cx, |view, cx| {
+            assert!(view.is_dirty(cx) && view.can_save(cx));
+        });
+        let split = view
+            .update_in(cx, |view, window, cx| view.clone_on_split(None, window, cx))
+            .await
+            .unwrap();
+        cx.run_until_parked();
+        assert_eq!(
+            split.read_with(cx, |view, cx| view.display_bytes(cx)),
+            [0xab, 1, 2, 255]
+        );
+        cx.update(|_, cx| cx.write_to_clipboard(ClipboardItem::new_string("CC DD".into())));
+        cx.dispatch_action(Paste);
+        draw(cx);
+        assert_eq!(
+            view.read_with(cx, |view, cx| view.display_bytes(cx)),
+            [0xab, 0xcc, 0xdd, 255]
+        );
+        cx.dispatch_action(Undo);
+        draw(cx);
+        assert_eq!(
+            view.read_with(cx, |view, cx| view.display_bytes(cx)),
+            [0xab, 1, 2, 255]
+        );
+        cx.dispatch_action(Redo);
+        draw(cx);
+        view.update(cx, |view, cx| view.save_edits(cx))
+            .await
+            .unwrap();
+        draw(cx);
+        assert_eq!(
+            fs.load_bytes(Path::new("/root/sample.bin")).await.unwrap(),
+            [0xab, 0xcc, 0xdd, 255]
+        );
+        assert!(!view.read_with(cx, |view, cx| view.is_dirty(cx)));
+        view.update_in(cx, |view, window, cx| view.undo_edit(&Undo, window, cx));
+        draw(cx);
+        assert!(view.read_with(cx, |view, cx| view.is_dirty(cx)));
+        assert_eq!(
+            view.read_with(cx, |view, cx| view.display_bytes(cx)),
+            [0xab, 1, 2, 255]
+        );
+        let first_save = view.update(cx, |view, cx| view.save_edits(cx));
+        let second_save = view.update(cx, |view, cx| view.save_edits(cx));
+        drop(first_save);
+        second_save.await.unwrap();
+        draw(cx);
+        assert_eq!(
+            fs.load_bytes(Path::new("/root/sample.bin")).await.unwrap(),
+            [0xab, 1, 2, 255]
+        );
+        assert!(!view.read_with(cx, |view, cx| view.document.read(cx).saving));
+    }
+
+    #[gpui::test(iterations = 5)]
+    async fn save_conflict_and_invalid_paste_preserve_pending_edits(cx: &mut TestAppContext) {
+        let (project, document, fs) = open_file(&[0, 1, 2, 3], cx).await;
+        let (view, cx) = add_view(cx, |window, cx| {
+            BinaryView::new(document, project, ViewState::default(), window, cx)
+        });
+        draw(cx);
+        view.update_in(cx, |view, window, cx| {
+            view.toggle_editing(&ToggleEditing, window, cx);
+            view.replace_bytes(1, &[255], cx).unwrap();
+            assert!(view.replace_bytes(3, &[1, 2], cx).is_err());
+        });
+        fs.insert_file("/root/sample.bin", vec![0, 9, 2, 3]).await;
+        cx.run_until_parked();
+        assert!(
+            view.update(cx, |view, cx| view.save_edits(cx))
+                .await
+                .is_err()
+        );
+        draw(cx);
+        assert_eq!(
+            fs.load_bytes(Path::new("/root/sample.bin")).await.unwrap(),
+            [0, 9, 2, 3]
+        );
+        view.read_with(cx, |view, cx| {
+            assert!(view.is_dirty(cx) && view.has_conflict(cx));
+            assert!(view.edit_error.is_some());
+        });
+        view.update_in(cx, |view, window, cx| view.discard_edits(window, cx));
+        draw(cx);
+        assert!(!view.read_with(cx, |view, cx| view.is_dirty(cx)));
+        assert_eq!(
+            view.read_with(cx, |view, cx| view.display_bytes(cx)),
+            [0, 9, 2, 3]
+        );
     }
 
     #[gpui::test]

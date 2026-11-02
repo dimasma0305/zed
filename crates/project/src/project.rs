@@ -378,6 +378,7 @@ pub enum Event {
     },
     LanguageServerPrompt(LanguageServerPromptRequest),
     LanguageServerShowDocument(LanguageServerShowDocumentRequest),
+    OpenProjectFromTerminal(TerminalProjectRequest),
     LanguageNotFound(Entity<Buffer>),
     ActiveEntryChanged(Option<ProjectEntryId>),
     ActivateProjectPanel,
@@ -456,6 +457,24 @@ pub enum Event {
 }
 
 pub struct AgentLocationChanged;
+
+#[derive(Clone, Debug)]
+pub struct TerminalProjectRequest {
+    pub paths: Vec<PathBuf>,
+    response_channel: async_channel::Sender<std::result::Result<(), String>>,
+}
+
+impl TerminalProjectRequest {
+    pub fn respond(self, result: std::result::Result<(), String>) {
+        self.response_channel.try_send(result).log_err();
+    }
+}
+
+impl PartialEq for TerminalProjectRequest {
+    fn eq(&self, other: &Self) -> bool {
+        self.paths == other.paths
+    }
+}
 
 pub enum DebugAdapterClientState {
     Starting(Task<Option<Arc<DebugAdapterClient>>>),
@@ -1761,6 +1780,7 @@ impl Project {
             remote_proto.add_entity_message_handler(Self::handle_toast);
             remote_proto.add_entity_message_handler(Self::handle_telemetry_event);
             remote_proto.add_entity_request_handler(Self::handle_language_server_prompt_request);
+            remote_proto.add_entity_request_handler(Self::handle_open_project_from_terminal);
             remote_proto
                 .add_entity_request_handler(Self::handle_language_server_show_document_request);
             remote_proto.add_entity_message_handler(Self::handle_hide_toast);
@@ -3495,6 +3515,66 @@ impl Project {
     #[cfg(any(test, feature = "test-support"))]
     pub fn pending_file_read_count(&self) -> usize {
         self.pending_file_reads.lock().len()
+    }
+
+    pub fn apply_byte_edits(
+        &mut self,
+        path: ProjectPath,
+        file_size: u64,
+        edits: Vec<fs::ByteEdit>,
+        cx: &mut Context<Self>,
+    ) -> Task<Result<()>> {
+        if self.is_disconnected(cx)
+            || self
+                .remote_connection_state(cx)
+                .is_some_and(|state| state != remote::ConnectionState::Connected)
+        {
+            return Task::ready(Err(anyhow!(
+                "Remote project is disconnected. Reconnect before saving"
+            )));
+        }
+        if let Err(error) = fs::validate_byte_edits(file_size, &edits) {
+            return Task::ready(Err(error));
+        }
+        let Some(worktree) = self.worktree_for_id(path.worktree_id, cx) else {
+            return Task::ready(Err(anyhow!("File worktree is unavailable")));
+        };
+        let guard = match self.file_range_limiter.acquire() {
+            Ok(guard) => guard,
+            Err(error) => return Task::ready(Err(error)),
+        };
+        if worktree.read(cx).is_local() {
+            let save = worktree.update(cx, |worktree, cx| {
+                worktree.apply_byte_edits(path.path, file_size, edits, cx)
+            });
+            return cx.background_spawn(async move {
+                let _guard = guard;
+                save.await
+            });
+        }
+        let Some(remote) = &self.remote_client else {
+            return Task::ready(Err(anyhow!("Hex editing requires a local or SSH project")));
+        };
+        let client = remote.read(cx).proto_client();
+        let request = proto::ApplyByteEdits {
+            project_id: self.remote_id().unwrap_or(REMOTE_SERVER_PROJECT_ID),
+            worktree_id: path.worktree_id.to_proto(),
+            path: path.path.as_unix_str().to_owned(),
+            file_size,
+            edits: edits
+                .into_iter()
+                .map(|edit| proto::BinaryByteEdit {
+                    offset: edit.offset,
+                    original: edit.original,
+                    replacement: edit.replacement,
+                })
+                .collect(),
+        };
+        cx.spawn(async move |_, _| {
+            let _guard = guard;
+            client.request(request).await?;
+            Ok(())
+        })
     }
 
     #[ztracing::instrument(skip_all)]
@@ -6085,6 +6165,36 @@ impl Project {
                     .map(|index| index as u64)
             }),
         })
+    }
+
+    async fn handle_open_project_from_terminal(
+        project: Entity<Self>,
+        envelope: TypedEnvelope<proto::OpenProjectFromTerminal>,
+        mut cx: AsyncApp,
+    ) -> Result<proto::Ack> {
+        let paths = envelope.payload.paths;
+        anyhow::ensure!(
+            !paths.is_empty() && paths.len() <= 64,
+            "expected 1 to 64 folders"
+        );
+        anyhow::ensure!(
+            paths.iter().map(String::len).sum::<usize>() <= 64 * 1024,
+            "folder paths are too long"
+        );
+        let (response_channel, response) = async_channel::bounded(1);
+        project.update(&mut cx, |_, cx| {
+            cx.emit(Event::OpenProjectFromTerminal(TerminalProjectRequest {
+                paths: paths.into_iter().map(PathBuf::from).collect(),
+                response_channel,
+            }));
+        });
+        drop(project);
+        response
+            .recv()
+            .await
+            .context("the project window did not handle the terminal request")?
+            .map_err(anyhow::Error::msg)?;
+        Ok(proto::Ack {})
     }
 
     async fn handle_language_server_show_document_request(
