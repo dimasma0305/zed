@@ -963,6 +963,24 @@ fn update_command_palette_filter(cx: &mut App) {
 
         // Skills are surfaced through the settings UI now, so this command
         // should never appear in the palette.
+        if settings::STANDALONE {
+            for namespace in [
+                "client",
+                "collab_panel",
+                "channel",
+                "channel_view",
+                "call",
+                "collab",
+                "zed_predict_onboarding",
+                "onboarding",
+            ] {
+                filter.hide_namespace(namespace);
+            }
+            filter.hide_action_types(&[
+                TypeId::of::<zed_actions::OpenAccountSettings>(),
+                TypeId::of::<zed_actions::OpenZedPredictOnboarding>(),
+            ]);
+        }
         filter.hide_action_types(&manage_skills_action);
         if !disable_ai {
             filter.show_action_types(skill_creator_actions.iter());

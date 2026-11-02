@@ -339,7 +339,9 @@ impl Render for TitleBar {
                 .into_any_element(),
         );
 
-        children.push(self.render_collaborator_list(window, cx).into_any_element());
+        if !settings::STANDALONE {
+            children.push(self.render_collaborator_list(window, cx).into_any_element());
+        }
 
         if title_bar_settings.show_onboarding_banner {
             if let Some(banner) = &self.banner {
@@ -368,7 +370,9 @@ impl Render for TitleBar {
                 .pr_1()
                 .gap_1()
                 .on_mouse_down(MouseButton::Left, |_, _, cx| cx.stop_propagation())
-                .child(self.render_call_controls(window, cx))
+                .when(!settings::STANDALONE, |this| {
+                    this.child(self.render_call_controls(window, cx))
+                })
                 .children(self.render_connection_status(status, cx))
                 .child(self.update_version.clone())
                 .when(
@@ -1138,6 +1142,9 @@ impl TitleBar {
         status: &client::Status,
         cx: &mut Context<Self>,
     ) -> Option<AnyElement> {
+        if settings::STANDALONE {
+            return None;
+        }
         match status {
             client::Status::ConnectionError
             | client::Status::ConnectionLost

@@ -63,7 +63,7 @@ macro_rules! concat_sections {
 }
 
 pub(crate) fn settings_data(cx: &App) -> Vec<SettingsPage> {
-    vec![
+    let mut pages = vec![
         general_page(cx),
         appearance_page(),
         keymap_page(),
@@ -75,11 +75,25 @@ pub(crate) fn settings_data(cx: &App) -> Vec<SettingsPage> {
         debugger_page(),
         terminal_page(),
         version_control_page(),
-        collaboration_page(),
         ai_page(cx),
         network_page(),
         developer_page(cx),
-    ]
+    ];
+    if !settings::STANDALONE {
+        pages.push(collaboration_page());
+    }
+    if settings::STANDALONE {
+        for page in &mut pages {
+            let mut collaboration_section = false;
+            page.items = std::mem::take(&mut page.items).into_vec().into_iter().filter(|item| {
+                if let SettingsPageItem::SectionHeader(title) = item {
+                    collaboration_section = *title == "Collaboration Panel";
+                }
+                !collaboration_section && !matches!(item, SettingsPageItem::SettingItem(item) if matches!(item.title, "Show Sign In" | "Show User Menu" | "Show User Picture" | "Show Onboarding Banner"))
+            }).collect();
+        }
+    }
+    pages
 }
 
 fn developer_page(cx: &App) -> SettingsPage {

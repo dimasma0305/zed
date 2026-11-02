@@ -6255,6 +6255,9 @@ impl AgentPanel {
     }
 
     fn should_render_trial_end_upsell(&self, cx: &mut Context<Self>) -> bool {
+        if settings::STANDALONE {
+            return false;
+        }
         if TrialEndUpsell::dismissed(cx) {
             return false;
         }
@@ -6288,6 +6291,9 @@ impl AgentPanel {
     }
 
     fn should_render_new_user_onboarding(&mut self, cx: &mut Context<Self>) -> bool {
+        if settings::STANDALONE {
+            return false;
+        }
         if self
             .new_user_onboarding_upsell_dismissed
             .load(Ordering::Acquire)

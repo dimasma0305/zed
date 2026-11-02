@@ -8,6 +8,9 @@ mod settings_file;
 mod settings_store;
 mod vscode_import;
 
+/// Builds this fork without Zed accounts, collaboration, or hosted AI services.
+pub const STANDALONE: bool = cfg!(feature = "standalone");
+
 pub use settings_macros::RegisterSetting;
 
 pub mod settings_content {

@@ -163,6 +163,12 @@ jobs:
         run: cargo test --locked -p worktree --lib file_range_tests
       - name: Test SSH binary ranges, viewer navigation and disconnect cleanup
         run: cargo test --locked -p remote_server --lib test_remote_binary
+      - name: Verify standalone account isolation
+        run: cargo test --locked -p client --features settings/standalone test_standalone_rejects_account_login
+      - name: Verify independent AI providers remain available
+        run: cargo test --locked -p language_models --features settings/standalone test_standalone_keeps_independent_providers
+      - name: Verify stale settings cannot restore account controls
+        run: cargo test --locked -p title_bar --features settings/standalone test_standalone_hides_account_controls_despite_user_settings
       - name: Test the Windows cursor query fallback
         run: cargo test --locked -p gpui_windows --features test-support cursor_position_tests
       - name: Test Windows bundled-server upload paths and identity checks

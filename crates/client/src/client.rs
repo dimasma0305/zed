@@ -164,6 +164,9 @@ impl Settings for ProxySettings {
 }
 
 pub fn init(client: &Arc<Client>, cx: &mut App) {
+    if settings::STANDALONE {
+        return;
+    }
     let client = Arc::downgrade(client);
     cx.on_action({
         let client = client.clone();
@@ -882,6 +885,10 @@ impl Client {
         try_provider: bool,
         cx: &AsyncApp,
     ) -> Result<Credentials> {
+        anyhow::ensure!(
+            !settings::STANDALONE,
+            "Zed accounts are unavailable in this standalone build"
+        );
         let is_reauthenticating = if self.status().borrow().is_signed_out() {
             self.set_status(Status::Authenticating, cx);
             false
@@ -981,6 +988,9 @@ impl Client {
     /// The connection is re-established with exponential backoff if it drops or fails to
     /// establish.
     fn connect_to_cloud(self: &Arc<Self>, cx: &AsyncApp) {
+        if settings::STANDALONE {
+            return;
+        }
         let this = self.clone();
         let task = cx.spawn(async move |cx| {
             #[cfg(any(test, feature = "test-support"))]
@@ -1044,6 +1054,10 @@ impl Client {
         try_provider: bool,
         cx: &AsyncApp,
     ) -> Result<()> {
+        anyhow::ensure!(
+            !settings::STANDALONE,
+            "Zed accounts are unavailable in this standalone build"
+        );
         // Don't try to sign in again if we're already connected to Collab, as it will temporarily disconnect us.
         if self.status().borrow().is_connected() {
             return Ok(());
@@ -1428,6 +1442,11 @@ impl Client {
     }
 
     pub fn authenticate_with_browser(self: &Arc<Self>, cx: &AsyncApp) -> Task<Result<Credentials>> {
+        if settings::STANDALONE {
+            return Task::ready(Err(anyhow!(
+                "Zed accounts are unavailable in this standalone build"
+            )));
+        }
         let http = self.http.clone();
         let this = self.clone();
         cx.spawn(async move |cx| {
@@ -1631,6 +1650,10 @@ impl Client {
         organization_id: OrganizationId,
         build_request: impl Fn(&str) -> Result<http_client::Request<http_client::AsyncBody>>,
     ) -> Result<http_client::Response<http_client::AsyncBody>> {
+        anyhow::ensure!(
+            !settings::STANDALONE,
+            "Hosted AI is unavailable in this standalone build"
+        );
         let http_client = self.http_client();
         let token = self
             .cached_llm_token(llm_token, organization_id.clone())
@@ -2161,6 +2184,33 @@ mod tests {
             status.next().await,
             Some(Status::ReconnectionError { .. })
         ));
+    }
+
+    #[gpui::test]
+    async fn test_standalone_rejects_account_login(cx: &mut TestAppContext) {
+        if !settings::STANDALONE {
+            return;
+        }
+        init_test(cx);
+        let http = FakeHttpClient::create(|_request| async move {
+            panic!("standalone login must not send a request")
+        });
+        let client = cx.update(|cx| Client::new(Arc::new(FakeSystemClock::new()), http, cx));
+        client.override_authenticate(|_| panic!("standalone login must not read credentials"));
+        assert!(client.sign_in(true, &cx.to_async()).await.is_err());
+        assert!(
+            client
+                .sign_in_with_optional_connect(true, &cx.to_async())
+                .await
+                .is_err()
+        );
+        assert!(
+            client
+                .authenticate_with_browser(&cx.to_async())
+                .await
+                .is_err()
+        );
+        assert!(matches!(*client.status().borrow(), Status::SignedOut));
     }
 
     #[gpui::test(iterations = 10)]

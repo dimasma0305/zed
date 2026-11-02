@@ -3644,6 +3644,9 @@ pub fn init(cx: &mut App) {
     cx.observe_new(move |workspace: &mut Workspace, _, _cx| {
         workspace.register_action(
             move |workspace, _: &zed_actions::OpenZedPredictOnboarding, window, cx| {
+                if settings::STANDALONE {
+                    return;
+                }
                 ZedPredictModal::toggle(
                     workspace,
                     workspace.user_store().clone(),

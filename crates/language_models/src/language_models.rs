@@ -232,14 +232,16 @@ fn register_language_model_providers(
     credentials_provider: Arc<dyn CredentialsProvider>,
     cx: &mut Context<LanguageModelRegistry>,
 ) {
-    registry.register_provider(
-        Arc::new(CloudLanguageModelProvider::new(
-            user_store,
-            client.clone(),
+    if !::settings::STANDALONE {
+        registry.register_provider(
+            Arc::new(CloudLanguageModelProvider::new(
+                user_store,
+                client.clone(),
+                cx,
+            )),
             cx,
-        )),
-        cx,
-    );
+        );
+    }
     registry.register_provider(
         Arc::new(AnthropicLanguageModelProvider::new(
             client.http_client(),
@@ -466,6 +468,39 @@ mod tests {
             .filter(|provider| provider.id().0.as_ref() == id)
             .map(|provider| provider.icon())
             .collect()
+    }
+
+    #[gpui::test]
+    fn test_standalone_keeps_independent_providers(cx: &mut App) {
+        if !::settings::STANDALONE {
+            return;
+        }
+        let (client, credentials_provider) = init_test(cx);
+        let user_store = cx.new(|cx| UserStore::new(client.clone(), cx));
+        let registry = cx.new(|_| LanguageModelRegistry::default());
+        registry.update(cx, |registry, cx| {
+            register_language_model_providers(
+                registry,
+                user_store,
+                client,
+                credentials_provider,
+                cx,
+            );
+        });
+        let providers = registry.read(cx).providers();
+        assert!(
+            !providers
+                .iter()
+                .any(|provider| provider.id() == language_model::ZED_CLOUD_PROVIDER_ID)
+        );
+        for id in ["anthropic", "openai", "ollama", "lmstudio"] {
+            assert!(
+                providers
+                    .iter()
+                    .any(|provider| provider.id().0.as_ref() == id),
+                "missing provider: {id}"
+            );
+        }
     }
 
     #[gpui::test]

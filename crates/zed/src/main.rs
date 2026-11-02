@@ -694,18 +694,22 @@ fn main() {
 
         copilot_ui::init(&app_state, cx);
         language_model::init(cx);
-        RefreshLlmTokenListener::register(
-            app_state.client.clone(),
-            app_state.user_store.clone(),
-            cx,
-        );
+        if !settings::STANDALONE {
+            RefreshLlmTokenListener::register(
+                app_state.client.clone(),
+                app_state.user_store.clone(),
+                cx,
+            );
+        }
         language_models::init(app_state.user_store.clone(), app_state.client.clone(), cx);
         acp_tools::init(cx);
         zed::telemetry_log::init(cx);
         zed::remote_debug::init(cx);
         edit_prediction_ui::init(cx);
         web_search::init(cx);
-        web_search_providers::init(app_state.client.clone(), app_state.user_store.clone(), cx);
+        if !settings::STANDALONE {
+            web_search_providers::init(app_state.client.clone(), app_state.user_store.clone(), cx);
+        }
         snippet_provider::init(cx);
         edit_prediction_registry::init(app_state.client.clone(), app_state.user_store.clone(), cx);
         let prompt_builder = PromptBuilder::load(app_state.fs.clone(), stdout_is_a_pty(), cx);
@@ -778,13 +782,19 @@ fn main() {
         language_tools::init(cx);
         call::init(app_state.client.clone(), app_state.user_store.clone(), cx);
         notifications::init(app_state.client.clone(), app_state.user_store.clone(), cx);
-        collab_ui::init(&app_state, cx);
+        if settings::STANDALONE {
+            title_bar::init(cx);
+        } else {
+            collab_ui::init(&app_state, cx);
+        }
         git_ui::init(cx);
         feedback::init(cx);
         markdown_preview::init(cx);
         tabular_data_preview::init(cx);
         svg_preview::init(cx);
-        onboarding::init(cx);
+        if !settings::STANDALONE {
+            onboarding::init(cx);
+        }
         settings_ui::init(cx);
         keymap_editor::init(cx);
         extensions_ui::init(cx);
@@ -1375,6 +1385,9 @@ fn handle_open_request(request: OpenRequest, app_state: Arc<AppState>, cx: &mut 
 }
 
 async fn authenticate(client: Arc<Client>, cx: &AsyncApp) -> Result<()> {
+    if settings::STANDALONE {
+        return Ok(());
+    }
     if stdout_is_a_pty() {
         if client::IMPERSONATE_LOGIN.is_some() {
             client.sign_in_with_optional_connect(false, cx).await?;
@@ -1564,7 +1577,7 @@ pub(crate) async fn restore_or_create_workspace(
             })
             .await?;
         }
-    } else if matches!(kvp.read_kvp(FIRST_OPEN), Ok(None)) {
+    } else if !settings::STANDALONE && matches!(kvp.read_kvp(FIRST_OPEN), Ok(None)) {
         cx.update(|cx| show_onboarding_view(app_state, cx)).await?;
     } else {
         cx.update(|cx| {

@@ -1031,7 +1031,11 @@ impl settings::Settings for AllLanguageSettings {
         Self {
             edit_predictions: EditPredictionSettings {
                 provider: if let Some(provider) = edit_prediction_provider {
-                    provider
+                    if settings::STANDALONE && provider == EditPredictionProvider::Zed {
+                        EditPredictionProvider::None
+                    } else {
+                        provider
+                    }
                 } else {
                     EditPredictionProvider::None
                 },

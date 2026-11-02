@@ -15226,7 +15226,6 @@ dependencies = [
  "telemetry",
  "tempfile",
  "thiserror 2.0.21",
- "urlencoding",
  "util",
  "which",
 ]

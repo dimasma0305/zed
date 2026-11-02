@@ -111,6 +111,9 @@ pub fn init(client: Arc<Client>, user_store: Entity<UserStore>, cx: &mut App) {
 fn edit_prediction_provider_config_for_settings(cx: &App) -> Option<EditPredictionProviderConfig> {
     let settings = &all_language_settings(None, cx).edit_predictions;
     let provider = settings.provider;
+    if ::settings::STANDALONE && matches!(provider, EditPredictionProvider::Zed) {
+        return None;
+    }
     match provider {
         EditPredictionProvider::None => None,
         EditPredictionProvider::Copilot => Some(EditPredictionProviderConfig::Copilot),
