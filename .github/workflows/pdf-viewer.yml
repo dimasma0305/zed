@@ -2,7 +2,6 @@ name: PDF viewer fork checks
 
 on:
   push:
-    tags: [pdf-viewer-windows-v*]
     branches:
       [
         feature/pdf-viewer,
@@ -17,6 +16,7 @@ on:
   pull_request:
     branches: [main]
   workflow_dispatch:
+  workflow_call:
 
 permissions:
   contents: read
@@ -74,7 +74,7 @@ jobs:
   remote-server:
     if: github.repository == 'dimasma0305/zed'
     runs-on: ubuntu-24.04
-    timeout-minutes: 120
+    timeout-minutes: 180
     env:
       CC: clang
       CXX: clang++
@@ -103,7 +103,7 @@ jobs:
       - name: Test remote bundle source, version, protocol and platform selection
         run: cargo test --locked -p remote --features bundled-remote-server transport::bundled_server::tests
       - name: Build the matching Linux server with production assertions
-        run: cargo --config 'profile.release-fast.debug="limited"' --config 'profile.release-fast.strip="debuginfo"' build --locked --profile release-fast -p remote_server --features remote_server/debug-embed
+        run: cargo --config 'profile.release-fast.opt-level=3' --config 'profile.release-fast.debug=0' --config 'profile.release-fast.debug-assertions=false' --config 'profile.release-fast.strip="debuginfo"' build --locked --profile release-fast -p remote_server --features remote_server/debug-embed
       - name: Test the remote terminal launcher process
         run: python3 script/check-remote-terminal-cli.py target/release-fast/remote_server
       - name: Validate runtime dependencies and exact server identity
@@ -129,7 +129,7 @@ jobs:
   windows:
     if: github.repository == 'dimasma0305/zed'
     runs-on: windows-2022
-    timeout-minutes: 120
+    timeout-minutes: 180
     steps:
       - uses: actions/checkout@93cb6efe18208431cddfb8368fd83d5badbf9bfd
       - name: Install the upstream Rust toolchain on the disposable runner
@@ -175,27 +175,27 @@ jobs:
         run: cargo check --locked -p zed
       - name: Generate dependency license notices
         run: ./script/generate-licenses.ps1
-      - name: Build the Windows development application
+      - name: Build the optimized Windows release
         env:
           ZED_RELEASE_CHANNEL: stable
           RELEASE_CHANNEL: stable
           ZED_UPDATE_EXPLANATION: Download updates for this PDF viewer fork from https://github.com/dimasma0305/zed/releases. Upstream automatic updates are disabled for this build.
-        run: cargo --config 'profile.dev.package.gpui_windows.debug-assertions=false' --config 'profile.dev.package.zed.debug-assertions=false' --config 'profile.dev.package.remote.debug-assertions=false' build --locked -p zed -p cli --bin zed --bin cli --features util/debug-embed,remote/bundled-remote-server
+        run: cargo --config 'profile.release-fast.opt-level=3' --config 'profile.release-fast.debug=0' --config 'profile.release-fast.debug-assertions=false' build --locked --profile release-fast -p zed -p cli --bin zed --bin cli --features util/debug-embed,remote/bundled-remote-server
       - name: Check the PDF helper inside the Windows application
-        run: python crates/pdf_renderer/tests/check_worker.py target/debug/zed.exe pdf-windows-qa
+        run: python crates/pdf_renderer/tests/check_worker.py target/release-fast/zed.exe pdf-windows-qa
       - uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a
         with:
           name: pdf-windows-qa
           path: pdf-windows-qa
           retention-days: 7
-      - name: Collect the Windows development application
+      - name: Collect the optimized Windows release
         shell: pwsh
         run: |
           New-Item -ItemType Directory -Path pdf-zed-windows -Force
-          Copy-Item -LiteralPath target/debug/zed.exe -Destination pdf-zed-windows
-          Copy-Item -LiteralPath target/debug/cli.exe -Destination pdf-zed-windows
-          Copy-Item -LiteralPath target/debug/conpty.dll -Destination pdf-zed-windows
-          Copy-Item -LiteralPath target/debug/OpenConsole.exe -Destination pdf-zed-windows
+          Copy-Item -LiteralPath target/release-fast/zed.exe -Destination pdf-zed-windows
+          Copy-Item -LiteralPath target/release-fast/cli.exe -Destination pdf-zed-windows
+          Copy-Item -LiteralPath target/release-fast/conpty.dll -Destination pdf-zed-windows
+          Copy-Item -LiteralPath target/release-fast/OpenConsole.exe -Destination pdf-zed-windows
           Copy-Item -LiteralPath LICENSE-GPL -Destination pdf-zed-windows
           Copy-Item -LiteralPath assets/licenses.md -Destination pdf-zed-windows
           Copy-Item -LiteralPath docs/src/pdf-viewer.md -Destination pdf-zed-windows
@@ -204,7 +204,7 @@ jobs:
           Get-FileHash -Algorithm SHA256 pdf-zed-windows/zed.exe | Format-List | Out-File pdf-zed-windows/sha256.txt
       - uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a
         with:
-          name: pdf-zed-windows-development
+          name: pdf-zed-windows-release
           path: pdf-zed-windows
           retention-days: 7
           if-no-files-found: error
@@ -216,63 +216,3 @@ jobs:
             ~/.cargo/git
             target
           key: pdf-viewer-${{ runner.os }}-rust-1.98.1-${{ hashFiles('Cargo.lock') }}
-
-  publish:
-    if: github.repository == 'dimasma0305/zed' && startsWith(github.ref, 'refs/tags/pdf-viewer-windows-v')
-    needs: [renderer, remote-server, windows]
-    runs-on: ubuntu-24.04
-    permissions:
-      contents: write
-    steps:
-      - uses: actions/download-artifact@3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c
-        with:
-          name: pdf-zed-windows-development
-          path: package
-      - uses: actions/download-artifact@3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c
-        with:
-          name: pdf-zed-linux-remote-server
-          path: package/remote-servers
-      - name: Validate package and create release assets
-        env:
-          SOURCE_COMMIT: ${{ github.sha }}
-          RELEASE_TAG: ${{ github.ref_name }}
-        run: |
-          python3 - <<'PYTHON'
-          import hashlib, json, os, pathlib, zipfile
-          root = pathlib.Path('package')
-          commit = os.environ['SOURCE_COMMIT']
-          assert (root / 'commit.txt').read_text(encoding='utf-8-sig').strip() == commit
-          manifest = json.loads((root / 'remote-servers/manifest.json').read_text())
-          assert manifest['source_commit'] == commit
-          for server in manifest['servers']:
-              archive = root / 'remote-servers' / server['archive']
-              assert hashlib.sha256(archive.read_bytes()).hexdigest() == server['sha256']
-          for required in ['zed.exe', 'cli.exe', 'conpty.dll', 'OpenConsole.exe', 'licenses.md', 'LICENSE-GPL']:
-              assert (root / required).stat().st_size > 0, required
-          files = sorted(path for path in root.rglob('*') if path.is_file())
-          (root / 'SHA256SUMS.txt').write_text(''.join(
-              f'{hashlib.sha256(path.read_bytes()).hexdigest()}  {path.relative_to(root).as_posix()}\n'
-              for path in files))
-          version = os.environ['RELEASE_TAG'].removeprefix('pdf-viewer-windows-')
-          output = pathlib.Path(f'zed-pdf-viewer-windows-x64-{version}.zip')
-          with zipfile.ZipFile(output, 'w', zipfile.ZIP_DEFLATED) as bundle:
-              for path in sorted(root.rglob('*')):
-                  if path.is_file():
-                      bundle.write(path, path.relative_to(root))
-          pathlib.Path(str(output) + '.sha256').write_text(
-              f'{hashlib.sha256(output.read_bytes()).hexdigest()}  {output.name}\n')
-          PYTHON
-      - name: Publish GitHub release
-        env:
-          GH_TOKEN: ${{ github.token }}
-          GH_REPO: ${{ github.repository }}
-          RELEASE_TAG: ${{ github.ref_name }}
-        run: |
-          cat > release-notes.md <<'NOTES'
-          Includes the latest upstream Zed changes and the fork's PDF viewer, hex editor, and terminal project launching features.
-
-          Extract the complete ZIP and keep the remote-servers folder beside zed.exe. The Windows application and Linux x86_64 remote server are built from the same commit. Upstream automatic updates remain disabled for this fork.
-
-          This package uses the existing development build workflow. Renderer, viewer, remote transport, and CLI checks must pass before publication. SHA256 checksums are included.
-          NOTES
-          gh release create "$RELEASE_TAG" zed-pdf-viewer-windows-x64-*.zip zed-pdf-viewer-windows-x64-*.zip.sha256 --verify-tag --title "Zed PDF and hex editor ${RELEASE_TAG#pdf-viewer-windows-}" --notes-file release-notes.md
