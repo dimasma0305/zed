@@ -476,6 +476,7 @@ mod tests {
             return;
         }
         let (client, credentials_provider) = init_test(cx);
+        <dyn fs::Fs>::set_global(fs::FakeFs::new(cx.background_executor().clone()), cx);
         let user_store = cx.new(|cx| UserStore::new(client.clone(), cx));
         let registry = cx.new(|_| LanguageModelRegistry::default());
         registry.update(cx, |registry, cx| {
