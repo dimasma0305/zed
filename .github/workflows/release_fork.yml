@@ -68,7 +68,7 @@ jobs:
               assert run['head_branch'] == 'main' and run['event'] == 'push'
               source['reuse'] = 'true'
               releases = json.loads(subprocess.run(['gh', 'api', f"repos/{os.environ['GH_REPO']}/releases?per_page=100"], check=True, capture_output=True, text=True).stdout)
-              existing = next((release for release in releases if release['target_commitish'] == source['source_commit'] and not release['draft']), None)
+              existing = next((release for release in releases if not release['draft'] and (release['target_commitish'] == source['source_commit'] or f"Source commit: `{source['source_commit']}`" in (release.get('body') or ''))), None)
               if existing:
                   print(f"Build already published: {existing['html_url']}")
                   with open(os.environ['GITHUB_OUTPUT'], 'a') as output:
@@ -152,8 +152,13 @@ jobs:
 
           This unsigned package uses the upstream release-fast profile with optimization level 3, debug assertions disabled, and no LTO. Renderer, viewer, remote transport, and CLI checks must pass before publication. SHA256 checksums are included.
           NOTES
+          printf '\nSource commit: `%s`\n' "$SOURCE_COMMIT" >> release-notes.md
           if ! gh release view "$RELEASE_TAG" >/dev/null 2>&1; then
-            gh release create "$RELEASE_TAG" --target "$SOURCE_COMMIT" --draft --title "Zed PDF and hex editor ${RELEASE_TAG#pdf-viewer-windows-}" --notes-file release-notes.md
+            if gh api "repos/$GH_REPO/git/ref/tags/$RELEASE_TAG" >/dev/null 2>&1; then
+              gh release create "$RELEASE_TAG" --verify-tag --draft --title "Zed PDF and hex editor ${RELEASE_TAG#pdf-viewer-windows-}" --notes-file release-notes.md
+            else
+              gh release create "$RELEASE_TAG" --target "$SOURCE_COMMIT" --draft --title "Zed PDF and hex editor ${RELEASE_TAG#pdf-viewer-windows-}" --notes-file release-notes.md
+            fi
           fi
           gh release upload "$RELEASE_TAG" zed-pdf-viewer-windows-x64-*.zip zed-pdf-viewer-windows-x64-*.zip.sha256 --clobber
           gh release edit "$RELEASE_TAG" --draft=false --latest
