@@ -3,40 +3,110 @@ name: release (fork)
 on:
   push:
     tags: [pdf-viewer-windows-v*]
+    branches: [main]
+    paths: [.github/fork-release.json]
   workflow_dispatch:
+  workflow_run:
+    workflows: [PDF viewer fork checks]
+    types: [completed]
+    branches: [main]
 
 permissions:
   contents: read
 
 concurrency:
-  group: release-fork-${{ github.ref }}
+  group: release-fork-publish
   cancel-in-progress: false
 
 jobs:
+  resolve:
+    if: github.repository == 'dimasma0305/zed' && (github.event_name != 'workflow_run' || github.event.workflow_run.conclusion == 'success')
+    runs-on: ubuntu-24.04
+    permissions:
+      contents: read
+      actions: read
+    outputs:
+      run_id: ${{ steps.source.outputs.run_id }}
+      source_commit: ${{ steps.source.outputs.source_commit }}
+      release_tag: ${{ steps.source.outputs.release_tag }}
+      reuse: ${{ steps.source.outputs.reuse }}
+      already_published: ${{ steps.source.outputs.already_published }}
+    steps:
+      - uses: actions/checkout@93cb6efe18208431cddfb8368fd83d5badbf9bfd
+      - name: Resolve and verify release source
+        id: source
+        env:
+          GH_TOKEN: ${{ github.token }}
+          GH_REPO: ${{ github.repository }}
+        run: |
+          python3 - <<'PYTHON'
+          import json, os, pathlib, re, subprocess
+          if os.environ['GITHUB_REF'].startswith('refs/tags/'):
+              source = dict(run_id=os.environ['GITHUB_RUN_ID'], source_commit=os.environ['GITHUB_SHA'], release_tag=os.environ['GITHUB_REF_NAME'], reuse='false')
+          else:
+              if os.environ['GITHUB_EVENT_NAME'] == 'workflow_run':
+                  event = json.loads(pathlib.Path(os.environ['GITHUB_EVENT_PATH']).read_text())
+                  completed = event['workflow_run']
+                  source = dict(run_id=completed['id'], source_commit=completed['head_sha'])
+                  refs = json.loads(subprocess.run(['gh', 'api', f"repos/{os.environ['GH_REPO']}/git/matching-refs/tags/pdf-viewer-windows-v"], check=True, capture_output=True, text=True).stdout)
+                  versions = [tuple(map(int, match.groups())) for ref in refs if (match := re.fullmatch(r'refs/tags/pdf-viewer-windows-v([0-9]+)\.([0-9]+)\.([0-9]+)', ref['ref']))]
+                  major, minor, patch = max(versions, default=(0, 1, 0))
+                  source['release_tag'] = f'pdf-viewer-windows-v{major}.{minor}.{patch + 1}'
+              else:
+                  source = json.loads(pathlib.Path('.github/fork-release.json').read_text())
+              assert isinstance(source['run_id'], int) and source['run_id'] > 0
+              run = json.loads(subprocess.run(['gh', 'api', f"repos/{os.environ['GH_REPO']}/actions/runs/{source['run_id']}"], check=True, capture_output=True, text=True).stdout)
+              assert run['status'] == 'completed' and run['conclusion'] == 'success', 'Source checks have not passed'
+              assert run['head_sha'] == source['source_commit'], 'Source commit differs from checked build'
+              assert run['repository']['full_name'] == os.environ['GH_REPO']
+              assert run['path'] == '.github/workflows/pdf-viewer.yml'
+              assert run['head_branch'] == 'main' and run['event'] == 'push'
+              source['reuse'] = 'true'
+              releases = json.loads(subprocess.run(['gh', 'api', f"repos/{os.environ['GH_REPO']}/releases?per_page=100"], check=True, capture_output=True, text=True).stdout)
+              existing = next((release for release in releases if release['target_commitish'] == source['source_commit'] and not release['draft']), None)
+              if existing:
+                  print(f"Build already published: {existing['html_url']}")
+                  with open(os.environ['GITHUB_OUTPUT'], 'a') as output:
+                      output.write('already_published=true\n')
+                  raise SystemExit(0)
+          assert re.fullmatch(r'[0-9a-f]{40}', source['source_commit'])
+          assert re.fullmatch(r'pdf-viewer-windows-v[0-9]+\.[0-9]+\.[0-9]+', source['release_tag'])
+          with open(os.environ['GITHUB_OUTPUT'], 'a') as output:
+              for key in ['run_id', 'source_commit', 'release_tag', 'reuse']:
+                  output.write(f'{key}={source[key]}\n')
+          PYTHON
+
   checks:
     if: github.repository == 'dimasma0305/zed' && startsWith(github.ref, 'refs/tags/pdf-viewer-windows-v')
     uses: ./.github/workflows/pdf-viewer.yml
 
   publish:
-    if: github.repository == 'dimasma0305/zed'
-    needs: [checks]
+    if: ${{ !cancelled() && needs.resolve.result == 'success' && needs.resolve.outputs.already_published != 'true' && (needs.checks.result == 'success' || (needs.resolve.outputs.reuse == 'true' && needs.checks.result == 'skipped')) }}
+    needs: [resolve, checks]
     runs-on: ubuntu-24.04
     permissions:
       contents: write
+      actions: read
     steps:
       - uses: actions/checkout@93cb6efe18208431cddfb8368fd83d5badbf9bfd
+        with:
+          ref: ${{ needs.resolve.outputs.source_commit }}
       - uses: actions/download-artifact@3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c
         with:
+          run-id: ${{ needs.resolve.outputs.run_id }}
+          github-token: ${{ github.token }}
           name: pdf-zed-windows-release
           path: package
       - uses: actions/download-artifact@3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c
         with:
+          run-id: ${{ needs.resolve.outputs.run_id }}
+          github-token: ${{ github.token }}
           name: pdf-zed-linux-remote-server
           path: package/remote-servers
       - name: Validate package and create release assets
         env:
-          SOURCE_COMMIT: ${{ github.sha }}
-          RELEASE_TAG: ${{ github.ref_name }}
+          SOURCE_COMMIT: ${{ needs.resolve.outputs.source_commit }}
+          RELEASE_TAG: ${{ needs.resolve.outputs.release_tag }}
         run: |
           python3 - <<'PYTHON'
           import hashlib, json, os, pathlib, zipfile
@@ -67,17 +137,18 @@ jobs:
         env:
           GH_TOKEN: ${{ github.token }}
           GH_REPO: ${{ github.repository }}
-          RELEASE_TAG: ${{ github.ref_name }}
+          SOURCE_COMMIT: ${{ needs.resolve.outputs.source_commit }}
+          RELEASE_TAG: ${{ needs.resolve.outputs.release_tag }}
         run: |
           cat > release-notes.md <<'NOTES'
-          Includes the latest upstream Zed changes and the fork's PDF viewer, hex editor, and terminal project launching features.
+          Includes upstream updates, PDF viewing, hex editing, and terminal project launching. Zed account login, hosted AI, and collaboration are disabled. Local models and providers configured with your own API keys remain available.
 
           Extract the complete ZIP and keep the remote-servers folder beside zed.exe. The Windows application and Linux x86_64 remote server are built from the same commit. Upstream automatic updates remain disabled for this fork.
 
           This unsigned package uses the upstream release-fast profile with optimization level 3, debug assertions disabled, and no LTO. Renderer, viewer, remote transport, and CLI checks must pass before publication. SHA256 checksums are included.
           NOTES
           if ! gh release view "$RELEASE_TAG" >/dev/null 2>&1; then
-            gh release create "$RELEASE_TAG" --verify-tag --draft --title "Zed PDF and hex editor ${RELEASE_TAG#pdf-viewer-windows-}" --notes-file release-notes.md
+            gh release create "$RELEASE_TAG" --target "$SOURCE_COMMIT" --draft --title "Zed PDF and hex editor ${RELEASE_TAG#pdf-viewer-windows-}" --notes-file release-notes.md
           fi
           gh release upload "$RELEASE_TAG" zed-pdf-viewer-windows-x64-*.zip zed-pdf-viewer-windows-x64-*.zip.sha256 --clobber
-          gh release edit "$RELEASE_TAG" --draft=false
+          gh release edit "$RELEASE_TAG" --draft=false --latest
