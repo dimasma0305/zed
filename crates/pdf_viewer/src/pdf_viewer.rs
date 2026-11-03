@@ -8,8 +8,8 @@ use futures::future;
 use futures::io::{AsyncReadExt as _, AsyncWriteExt as _};
 use gpui::{
     Bounds, CursorStyle, Entity, EventEmitter, FocusHandle, Focusable, MouseButton, MouseDownEvent,
-    MouseMoveEvent, MouseUpEvent, PinchEvent, Point, Render, RenderImage, ScrollDelta,
-    ScrollHandle, ScrollWheelEvent, Size, Task, WeakEntity, actions, canvas, img, point, size,
+    MouseMoveEvent, MouseUpEvent, PinchEvent, Point, Render, RenderImage, ScrollDelta, ScrollEvent,
+    ScrollHandle, Size, Task, WeakEntity, actions, canvas, img, point, size,
 };
 use pdf_renderer::{MAX_FILE_BYTES, RenderedPage};
 #[cfg(not(any(test, feature = "test-support")))]
@@ -652,7 +652,7 @@ impl PdfView {
 
     fn handle_scroll_wheel(
         &mut self,
-        event: &ScrollWheelEvent,
+        event: &ScrollEvent,
         window: &mut Window,
         cx: &mut Context<Self>,
     ) {
@@ -991,7 +991,7 @@ impl Render for PdfView {
                     } else {
                         CursorStyle::OpenHand
                     })
-                    .on_scroll_wheel(cx.listener(Self::handle_scroll_wheel))
+                    .on_scroll(cx.listener(Self::handle_scroll_wheel))
                     .on_pinch(cx.listener(Self::handle_pinch))
                     .on_mouse_down(MouseButton::Left, cx.listener(Self::handle_mouse_down))
                     .on_mouse_down(MouseButton::Middle, cx.listener(Self::handle_mouse_down))
@@ -1584,7 +1584,7 @@ mod tests {
                 view.image.clone().expect("page bitmap"),
             )
         });
-        cx.simulate_event(ScrollWheelEvent {
+        cx.simulate_event(ScrollEvent {
             position,
             delta: ScrollDelta::Pixels(point(px(0.0), px(0.5))),
             modifiers: Modifiers {
@@ -1617,7 +1617,7 @@ mod tests {
         });
         draw_window(cx);
         let offset = view.read_with(cx, |view, _| view.scroll_handle.offset());
-        cx.simulate_event(ScrollWheelEvent {
+        cx.simulate_event(ScrollEvent {
             position,
             delta: ScrollDelta::Pixels(point(px(-12.0), px(-30.0))),
             ..Default::default()
@@ -1653,7 +1653,7 @@ mod tests {
         let position = view.read_with(cx, |view, _| {
             view.viewport_bounds.expect("viewport").center()
         });
-        cx.simulate_event(ScrollWheelEvent {
+        cx.simulate_event(ScrollEvent {
             position,
             delta: ScrollDelta::Lines(point(1.0, 0.0)),
             modifiers: Modifiers {
@@ -1667,7 +1667,7 @@ mod tests {
             "horizontal-only zoom input is ignored"
         );
         let fit_zoom = view.read_with(cx, |view, _| view.effective_zoom());
-        cx.simulate_event(ScrollWheelEvent {
+        cx.simulate_event(ScrollEvent {
             position,
             delta: ScrollDelta::Lines(point(0.0, 1.0)),
             modifiers: Modifiers {
@@ -1678,7 +1678,7 @@ mod tests {
         });
         assert!((view.read_with(cx, |view, _| view.zoom) - fit_zoom * 1.2).abs() < 0.0001);
         draw_window(cx);
-        cx.simulate_event(ScrollWheelEvent {
+        cx.simulate_event(ScrollEvent {
             position,
             delta: ScrollDelta::Lines(point(0.0, -1.0)),
             modifiers: Modifiers {

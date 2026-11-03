@@ -39,15 +39,18 @@ jobs:
       - uses: actions/checkout@93cb6efe18208431cddfb8368fd83d5badbf9bfd
       - name: Install the upstream Rust toolchain on the disposable runner
         run: rustup toolchain install 1.98.1 --profile minimal --component rustfmt --component clippy
-      - uses: actions/cache/restore@0057852bfaa89a56745cba8c7296529d2fc39830
+      - uses: actions/cache/restore@caa296126883cff596d87d8935842f9db880ef25
         id: pdf-cache
         with:
           path: |
             ~/.cargo/registry
             ~/.cargo/git
             target
-          key: pdf-viewer-${{ runner.os }}-rust-1.98.1-${{ hashFiles('Cargo.lock') }}
-          restore-keys: pdf-viewer-${{ runner.os }}-rust-1.98.1-
+          key: pdf-viewer-${{ runner.os }}-rust-1.98.1-${{ hashFiles('Cargo.lock') }}-renderer-${{ github.run_id }}-${{ github.run_attempt }}
+          restore-keys: |
+            pdf-viewer-${{ runner.os }}-rust-1.98.1-${{ hashFiles('Cargo.lock') }}-renderer-
+            pdf-viewer-${{ runner.os }}-rust-1.98.1-${{ hashFiles('Cargo.lock') }}
+            pdf-viewer-${{ runner.os }}-rust-1.98.1-
       - name: Check Rust formatting
         run: cargo fmt -p cli -p terminal -p pdf_renderer -p pdf_viewer -p zed -p remote -p remote_server -p project -p worktree -p workspace -p proto -p binary_viewer -p gpui_windows -p fs -p recent_projects -- --check
       - name: Test the renderer and worker protocol
@@ -63,14 +66,14 @@ jobs:
           retention-days: 7
       - name: Lint the renderer using the repository wrapper
         run: ./script/clippy -p pdf_renderer --locked
-      - uses: actions/cache/save@0057852bfaa89a56745cba8c7296529d2fc39830
-        if: always() && steps.pdf-cache.outputs.cache-hit != 'true'
+      - uses: actions/cache/save@caa296126883cff596d87d8935842f9db880ef25
+        if: ${{ !cancelled() && steps.pdf-cache.outputs.cache-hit != 'true' && steps.pdf-cache.outputs.cache-primary-key != '' }}
         with:
           path: |
             ~/.cargo/registry
             ~/.cargo/git
             target
-          key: pdf-viewer-${{ runner.os }}-rust-1.98.1-${{ hashFiles('Cargo.lock') }}
+          key: ${{ steps.pdf-cache.outputs.cache-primary-key }}
   remote-server:
     if: github.repository == 'dimasma0305/zed'
     runs-on: ubuntu-24.04
@@ -84,14 +87,17 @@ jobs:
       - uses: actions/checkout@93cb6efe18208431cddfb8368fd83d5badbf9bfd
       - name: Install the upstream Rust toolchain on the disposable runner
         run: rustup toolchain install 1.98.1 --profile minimal
-      - uses: actions/cache/restore@0057852bfaa89a56745cba8c7296529d2fc39830
+      - uses: actions/cache/restore@caa296126883cff596d87d8935842f9db880ef25
+        id: remote-cache
         with:
           path: |
             ~/.cargo/registry
             ~/.cargo/git
             target
-          key: pdf-remote-linux-x86_64-rust-1.98.1-${{ hashFiles('Cargo.lock') }}
+          key: pdf-remote-linux-x86_64-rust-1.98.1-${{ hashFiles('Cargo.lock') }}-remote-server-${{ github.run_id }}-${{ github.run_attempt }}
           restore-keys: |
+            pdf-remote-linux-x86_64-rust-1.98.1-${{ hashFiles('Cargo.lock') }}-remote-server-
+            pdf-remote-linux-x86_64-rust-1.98.1-${{ hashFiles('Cargo.lock') }}
             pdf-remote-linux-x86_64-rust-1.98.1-
             pdf-viewer-Linux-rust-1.98.1-
       - name: Set up upstream Linux build dependencies on the disposable runner
@@ -118,14 +124,14 @@ jobs:
           path: pdf-remote-server
           retention-days: 7
           if-no-files-found: error
-      - uses: actions/cache/save@0057852bfaa89a56745cba8c7296529d2fc39830
-        if: always()
+      - uses: actions/cache/save@caa296126883cff596d87d8935842f9db880ef25
+        if: ${{ !cancelled() && steps.remote-cache.outputs.cache-hit != 'true' && steps.remote-cache.outputs.cache-primary-key != '' }}
         with:
           path: |
             ~/.cargo/registry
             ~/.cargo/git
             target
-          key: pdf-remote-linux-x86_64-rust-1.98.1-${{ hashFiles('Cargo.lock') }}
+          key: ${{ steps.remote-cache.outputs.cache-primary-key }}
   windows:
     if: github.repository == 'dimasma0305/zed'
     runs-on: windows-2022
@@ -134,15 +140,18 @@ jobs:
       - uses: actions/checkout@93cb6efe18208431cddfb8368fd83d5badbf9bfd
       - name: Install the upstream Rust toolchain on the disposable runner
         run: rustup toolchain install 1.98.1 --profile minimal
-      - uses: actions/cache/restore@0057852bfaa89a56745cba8c7296529d2fc39830
+      - uses: actions/cache/restore@caa296126883cff596d87d8935842f9db880ef25
         id: pdf-cache
         with:
           path: |
             ~/.cargo/registry
             ~/.cargo/git
             target
-          key: pdf-viewer-${{ runner.os }}-rust-1.98.1-${{ hashFiles('Cargo.lock') }}
-          restore-keys: pdf-viewer-${{ runner.os }}-rust-1.98.1-
+          key: pdf-viewer-${{ runner.os }}-rust-1.98.1-${{ hashFiles('Cargo.lock') }}-windows-${{ github.run_id }}-${{ github.run_attempt }}
+          restore-keys: |
+            pdf-viewer-${{ runner.os }}-rust-1.98.1-${{ hashFiles('Cargo.lock') }}-windows-
+            pdf-viewer-${{ runner.os }}-rust-1.98.1-${{ hashFiles('Cargo.lock') }}
+            pdf-viewer-${{ runner.os }}-rust-1.98.1-
       - name: Check PDF viewer integration
         run: cargo check --locked -p pdf_viewer
       - name: Test current-folder CLI launch
@@ -214,11 +223,11 @@ jobs:
           path: pdf-zed-windows
           retention-days: 7
           if-no-files-found: error
-      - uses: actions/cache/save@0057852bfaa89a56745cba8c7296529d2fc39830
-        if: always() && steps.pdf-cache.outputs.cache-hit != 'true'
+      - uses: actions/cache/save@caa296126883cff596d87d8935842f9db880ef25
+        if: ${{ !cancelled() && steps.pdf-cache.outputs.cache-hit != 'true' && steps.pdf-cache.outputs.cache-primary-key != '' }}
         with:
           path: |
             ~/.cargo/registry
             ~/.cargo/git
             target
-          key: pdf-viewer-${{ runner.os }}-rust-1.98.1-${{ hashFiles('Cargo.lock') }}
+          key: ${{ steps.pdf-cache.outputs.cache-primary-key }}

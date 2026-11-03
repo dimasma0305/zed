@@ -22,3 +22,7 @@ rustflags = ["-C", "link-arg=-fuse-ld=lld"]
 
 [env]
 MACOSX_DEPLOYMENT_TARGET = "12.0"
+
+# Tree-sitter links Wasmtime's static C API; its Windows headers otherwise declare DLL imports.
+CFLAGS_x86_64_pc_windows_msvc = "/DWASM_API_EXTERN= /DWASI_API_EXTERN="
+CFLAGS_aarch64_pc_windows_msvc = "/DWASM_API_EXTERN= /DWASI_API_EXTERN="

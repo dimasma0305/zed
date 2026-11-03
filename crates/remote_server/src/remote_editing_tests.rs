@@ -990,7 +990,7 @@ async fn test_remote_pdf_view_navigation_reload_and_disconnect(
     });
     let keyboard_zoom = view.read_with(visual_cx, |view, _| view.test_state().zoom);
     assert!(keyboard_zoom > 1.0);
-    visual_cx.simulate_event(gpui::ScrollWheelEvent {
+    visual_cx.simulate_event(gpui::ScrollEvent {
         position: gpui::point(gpui::px(200.0), gpui::px(200.0)),
         delta: gpui::ScrollDelta::Pixels(gpui::point(gpui::px(0.0), gpui::px(2.5))),
         modifiers: gpui::Modifiers {
