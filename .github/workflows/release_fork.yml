@@ -69,7 +69,7 @@ jobs:
               source['reuse'] = 'true'
               releases = json.loads(subprocess.run(['gh', 'api', f"repos/{os.environ['GH_REPO']}/releases?per_page=100"], check=True, capture_output=True, text=True).stdout)
               existing = next((release for release in releases if not release['draft'] and (release['target_commitish'] == source['source_commit'] or f"Source commit: `{source['source_commit']}`" in (release.get('body') or ''))), None)
-              if existing:
+              if existing and os.environ['GITHUB_EVENT_NAME'] == 'workflow_run':
                   print(f"Build already published: {existing['html_url']}")
                   with open(os.environ['GITHUB_OUTPUT'], 'a') as output:
                       output.write('skip_publish=true\n')
@@ -88,14 +88,18 @@ jobs:
   publish:
     if: ${{ !cancelled() && needs.resolve.result == 'success' && needs.resolve.outputs.skip_publish != 'true' && (needs.checks.result == 'success' || (needs.resolve.outputs.reuse == 'true' && needs.checks.result == 'skipped')) }}
     needs: [resolve, checks]
-    runs-on: ubuntu-24.04
+    runs-on: windows-2022
+    timeout-minutes: 30
+    defaults:
+      run:
+        shell: bash
     permissions:
       contents: write
       actions: read
     steps:
       - uses: actions/checkout@93cb6efe18208431cddfb8368fd83d5badbf9bfd
         with:
-          ref: ${{ needs.resolve.outputs.source_commit }}
+          ref: ${{ github.sha }}
       - uses: actions/download-artifact@3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c
         with:
           run-id: ${{ needs.resolve.outputs.run_id }}
@@ -113,7 +117,7 @@ jobs:
           SOURCE_COMMIT: ${{ needs.resolve.outputs.source_commit }}
           RELEASE_TAG: ${{ needs.resolve.outputs.release_tag }}
         run: |
-          python3 - <<'PYTHON'
+          python - <<'PYTHON'
           import hashlib, json, os, pathlib, zipfile
           root = pathlib.Path('package')
           commit = os.environ['SOURCE_COMMIT']
@@ -125,6 +129,10 @@ jobs:
               assert hashlib.sha256(archive.read_bytes()).hexdigest() == server['sha256']
           for required in ['zed.exe', 'cli.exe', 'conpty.dll', 'OpenConsole.exe', 'licenses.md', 'LICENSE-GPL']:
               assert (root / required).stat().st_size > 0, required
+          (root / 'bin').mkdir(exist_ok=True)
+          wrapper = '@echo off\r\n"%~dp0..\\cli.exe" %*\r\nexit /b %errorlevel%\r\n'
+          for command in ['zed.cmd', 'zed-fork.cmd']:
+              (root / 'bin' / command).write_bytes(wrapper.encode('utf-8'))
           files = sorted(path for path in root.rglob('*') if path.is_file())
           (root / 'SHA256SUMS.txt').write_text(''.join(
               f'{hashlib.sha256(path.read_bytes()).hexdigest()}  {path.relative_to(root).as_posix()}\n'
@@ -138,6 +146,20 @@ jobs:
           pathlib.Path(str(output) + '.sha256').write_text(
               f'{hashlib.sha256(output.read_bytes()).hexdigest()}  {output.name}\n')
           PYTHON
+      - name: Build the Windows setup wizard
+        shell: pwsh
+        env:
+          RELEASE_TAG: ${{ needs.resolve.outputs.release_tag }}
+        run: |
+          $version = $env:RELEASE_TAG -replace '^pdf-viewer-windows-v', ''
+          ./script/build-fork-installer.ps1 -PackageDirectory package -OutputDirectory dist -Version $version
+      - name: Verify installation, upgrade and uninstall
+        shell: pwsh
+        env:
+          RELEASE_TAG: ${{ needs.resolve.outputs.release_tag }}
+        run: |
+          $version = $env:RELEASE_TAG -replace '^pdf-viewer-windows-v', ''
+          ./script/check-fork-installer.ps1 -Installer "dist/zed-fork-windows-x64-v$version-setup.exe" -PackageDirectory package
       - name: Publish GitHub release
         env:
           GH_TOKEN: ${{ github.token }}
@@ -148,9 +170,11 @@ jobs:
           cat > release-notes.md <<'NOTES'
           Includes upstream updates, PDF viewing, hex editing, and terminal project launching. Zed account login, hosted AI, and collaboration are disabled. Local models and providers configured with your own API keys remain available.
 
-          Extract the complete ZIP and keep the remote-servers folder beside zed.exe. The Windows application and Linux x86_64 remote server are built from the same commit. Upstream automatic updates remain disabled for this fork.
+          Download the setup.exe asset and follow the Windows setup wizard. It installs Zed Fork for your Windows account, creates a Start menu shortcut, and includes an uninstaller. Desktop shortcuts, File Explorer integration, and CLI commands on PATH are optional. Run a newer installer to upgrade.
 
-          This unsigned package uses the upstream release-fast profile with optimization level 3, debug assertions disabled, and no LTO. Renderer, viewer, remote transport, and CLI checks must pass before publication. SHA256 checksums are included.
+          The portable ZIP is also available. Keep its complete contents together. Both packages include the matching Linux x86_64 SSH server. Upstream automatic updates remain disabled for this fork.
+
+          These unsigned packages use the upstream release-fast profile with optimization level 3, debug assertions disabled, and no LTO. Renderer, viewer, remote transport, and CLI checks must pass before publication. SHA256 checksums are included.
           NOTES
           printf '\nSource commit: `%s`\n' "$SOURCE_COMMIT" >> release-notes.md
           if ! gh release view "$RELEASE_TAG" >/dev/null 2>&1; then
@@ -160,5 +184,5 @@ jobs:
               gh release create "$RELEASE_TAG" --target "$SOURCE_COMMIT" --draft --title "Zed PDF and hex editor ${RELEASE_TAG#pdf-viewer-windows-}" --notes-file release-notes.md
             fi
           fi
-          gh release upload "$RELEASE_TAG" zed-pdf-viewer-windows-x64-*.zip zed-pdf-viewer-windows-x64-*.zip.sha256 --clobber
-          gh release edit "$RELEASE_TAG" --draft=false --latest
+          gh release upload "$RELEASE_TAG" zed-pdf-viewer-windows-x64-*.zip zed-pdf-viewer-windows-x64-*.zip.sha256 dist/zed-fork-windows-x64-*-setup.exe dist/zed-fork-windows-x64-*-setup.exe.sha256 --clobber
+          gh release edit "$RELEASE_TAG" --notes-file release-notes.md --draft=false --latest
