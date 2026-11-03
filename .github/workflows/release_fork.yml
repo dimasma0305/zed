@@ -118,7 +118,7 @@ jobs:
           RELEASE_TAG: ${{ needs.resolve.outputs.release_tag }}
         run: |
           python - <<'PYTHON'
-          import hashlib, json, os, pathlib, zipfile
+          import hashlib, json, os, pathlib, shutil, zipfile
           root = pathlib.Path('package')
           commit = os.environ['SOURCE_COMMIT']
           assert (root / 'commit.txt').read_text(encoding='utf-8-sig').strip() == commit
@@ -131,8 +131,9 @@ jobs:
               assert (root / required).stat().st_size > 0, required
           (root / 'bin').mkdir(exist_ok=True)
           wrapper = '@echo off\r\n"%~dp0..\\cli.exe" %*\r\nexit /b %errorlevel%\r\n'
-          for command in ['zed.cmd', 'zed-fork.cmd']:
+          for command in ['zed.cmd']:
               (root / 'bin' / command).write_bytes(wrapper.encode('utf-8'))
+          shutil.copyfile(root / 'cli.exe', root / 'bin' / 'zed.exe')
           files = sorted(path for path in root.rglob('*') if path.is_file())
           (root / 'SHA256SUMS.txt').write_text(''.join(
               f'{hashlib.sha256(path.read_bytes()).hexdigest()}  {path.relative_to(root).as_posix()}\n'
@@ -159,7 +160,7 @@ jobs:
           RELEASE_TAG: ${{ needs.resolve.outputs.release_tag }}
         run: |
           $version = $env:RELEASE_TAG -replace '^pdf-viewer-windows-v', ''
-          ./script/check-fork-installer.ps1 -Installer "dist/zed-fork-windows-x64-v$version-setup.exe" -PackageDirectory package
+          ./script/check-fork-installer.ps1 -Installer "dist/zed-windows-x64-v$version-setup.exe" -PackageDirectory package
       - name: Publish GitHub release
         env:
           GH_TOKEN: ${{ github.token }}
@@ -170,7 +171,7 @@ jobs:
           cat > release-notes.md <<'NOTES'
           Includes upstream updates, PDF viewing, hex editing, and terminal project launching. Zed account login, hosted AI, and collaboration are disabled. Local models and providers configured with your own API keys remain available.
 
-          Download the setup.exe asset and follow the Windows setup wizard. It installs Zed Fork for your Windows account, creates a Start menu shortcut, and includes an uninstaller. Desktop shortcuts, File Explorer integration, and CLI commands on PATH are optional. Run a newer installer to upgrade.
+          Download the setup.exe asset and follow the Windows setup wizard. It installs as Zed and replaces the existing per-user stable Zed installation, preserves your settings, creates a Start menu shortcut, and includes an uninstaller. Desktop shortcuts, File Explorer integration, and CLI commands on PATH are optional. Run a newer installer to upgrade.
 
           The portable ZIP is also available. Keep its complete contents together. Both packages include the matching Linux x86_64 SSH server. Upstream automatic updates remain disabled for this fork.
 
@@ -184,5 +185,12 @@ jobs:
               gh release create "$RELEASE_TAG" --target "$SOURCE_COMMIT" --draft --title "Zed PDF and hex editor ${RELEASE_TAG#pdf-viewer-windows-}" --notes-file release-notes.md
             fi
           fi
-          gh release upload "$RELEASE_TAG" zed-pdf-viewer-windows-x64-*.zip zed-pdf-viewer-windows-x64-*.zip.sha256 dist/zed-fork-windows-x64-*-setup.exe dist/zed-fork-windows-x64-*-setup.exe.sha256 --clobber
+          gh release upload "$RELEASE_TAG" zed-pdf-viewer-windows-x64-*.zip zed-pdf-viewer-windows-x64-*.zip.sha256 dist/zed-windows-x64-*-setup.exe dist/zed-windows-x64-*-setup.exe.sha256 --clobber
           gh release edit "$RELEASE_TAG" --notes-file release-notes.md --draft=false --latest
+          version="${RELEASE_TAG#pdf-viewer-windows-}"
+          for suffix in "" ".sha256"; do
+            obsolete="zed-fork-windows-x64-$version-setup.exe$suffix"
+            if gh release view "$RELEASE_TAG" --json assets --jq '.assets[].name' | grep -Fxq "$obsolete"; then
+              gh release delete-asset "$RELEASE_TAG" "$obsolete" --yes
+            fi
+          done

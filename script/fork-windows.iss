@@ -5,15 +5,21 @@
   #error ReleaseVersion is required
 #endif
 
+#define ApplicationVersion GetFileVersion(PackageDir + "\zed.exe")
+
 [Setup]
-AppId={{413FF1A9-1C59-47A8-997E-E3A3DA40D694}
-AppName=Zed Fork
-AppVersion={#ReleaseVersion}
+AppId={{2DB0DA96-CA55-49BB-AF4F-64AF36A86712}
+AppName=Zed
+AppVerName=Zed
+UninstallDisplayName=Zed
+AppVersion={#ApplicationVersion}
 AppPublisher=dimasma0305
 AppPublisherURL=https://github.com/dimasma0305/zed
 AppSupportURL=https://github.com/dimasma0305/zed/issues
 AppUpdatesURL=https://github.com/dimasma0305/zed/releases
-DefaultDirName={localappdata}\Programs\Zed Fork
+DefaultDirName={autopf}\Zed
+DefaultGroupName=Zed
+UsePreviousAppDir=yes
 PrivilegesRequired=lowest
 ArchitecturesAllowed=x64compatible
 ArchitecturesInstallIn64BitMode=x64compatible
@@ -31,32 +37,38 @@ CloseApplications=yes
 RestartApplications=no
 ChangesEnvironment=yes
 ChangesAssociations=yes
-SetupMutex=ZedForkSetup
+SetupMutex=ZedStableSetup
+AppMutex=Zed-Editor-Stable-Instance-Mutex
 
 [Tasks]
 Name: "desktopicon"; Description: "Create a desktop shortcut"; Flags: unchecked
-Name: "contextmenu"; Description: "Add Open with Zed Fork to File Explorer"; Flags: unchecked
-Name: "addtopath"; Description: "Add zed and zed-fork commands to your user PATH"; Flags: unchecked
+Name: "contextmenu"; Description: "Add Open with Zed to File Explorer"; Flags: unchecked
+Name: "addtopath"; Description: "Add the zed command to your user PATH"
 
 [Files]
 Source: "{#PackageDir}\*"; DestDir: "{app}"; Flags: ignoreversion recursesubdirs createallsubdirs
 
 [Icons]
-Name: "{userprograms}\Zed Fork"; Filename: "{app}\zed.exe"
-Name: "{userdesktop}\Zed Fork"; Filename: "{app}\zed.exe"; Tasks: desktopicon
+Name: "{group}\Zed"; Filename: "{app}\zed.exe"; AppUserModelID: "ZedIndustries.Zed"
+Name: "{userdesktop}\Zed"; Filename: "{app}\zed.exe"; AppUserModelID: "ZedIndustries.Zed"; Tasks: desktopicon
 
 [Run]
-Filename: "{app}\zed.exe"; Description: "Launch Zed Fork"; Flags: nowait postinstall skipifsilent
+Filename: "{app}\zed.exe"; Description: "Launch Zed"; Flags: nowait postinstall skipifsilent
 
 [Registry]
-Root: HKCU; Subkey: "Software\Classes\*\shell\ZedFork"; ValueType: string; ValueData: "Open with Zed Fork"; Flags: uninsdeletekey; Tasks: contextmenu
-Root: HKCU; Subkey: "Software\Classes\*\shell\ZedFork"; ValueType: string; ValueName: "Icon"; ValueData: "{app}\zed.exe"; Tasks: contextmenu
-Root: HKCU; Subkey: "Software\Classes\*\shell\ZedFork\command"; ValueType: string; ValueData: """{app}\zed.exe"" ""%1"""; Tasks: contextmenu
-Root: HKCU; Subkey: "Software\Classes\Directory\shell\ZedFork"; ValueType: string; ValueData: "Open with Zed Fork"; Flags: uninsdeletekey; Tasks: contextmenu
-Root: HKCU; Subkey: "Software\Classes\Directory\shell\ZedFork\command"; ValueType: string; ValueData: """{app}\zed.exe"" ""%1"""; Tasks: contextmenu
+Root: HKCU; Subkey: "Software\Classes\*\shell\Zed"; ValueType: string; ValueData: "Open with Zed"; Flags: uninsdeletekey; Tasks: contextmenu
+Root: HKCU; Subkey: "Software\Classes\*\shell\Zed"; ValueType: string; ValueName: "Icon"; ValueData: "{app}\zed.exe"; Tasks: contextmenu
+Root: HKCU; Subkey: "Software\Classes\*\shell\Zed\command"; ValueType: string; ValueData: """{app}\zed.exe"" ""%1"""; Tasks: contextmenu
+Root: HKCU; Subkey: "Software\Classes\Directory\shell\Zed"; ValueType: string; ValueData: "Open with Zed"; Flags: uninsdeletekey; Tasks: contextmenu
+Root: HKCU; Subkey: "Software\Classes\Directory\shell\Zed\command"; ValueType: string; ValueData: """{app}\zed.exe"" ""%1"""; Tasks: contextmenu
+
+Root: HKCU; Subkey: "Software\Classes\Applications\Zed.exe\shell\open\command"; ValueType: string; ValueData: """{app}\zed.exe"" ""%1"""; Flags: uninsdeletekey
+Root: HKCU; Subkey: "Software\Classes\zed"; ValueType: string; ValueData: "URL:zed Protocol"; Flags: uninsdeletekey
+Root: HKCU; Subkey: "Software\Classes\zed"; ValueType: string; ValueName: "URL Protocol"; ValueData: ""
+Root: HKCU; Subkey: "Software\Classes\zed\shell\open\command"; ValueType: string; ValueData: """{app}\zed.exe"" ""%1"""
 
 [Code]
-const InstallerKey = 'Software\dimasma0305\ZedFork\Installer';
+const InstallerKey = 'Software\dimasma0305\Zed\Installer';
 
 function ContainsPathEntry(Path, Entry: String): Boolean;
 var Remaining, Part: String; Separator: Integer;
@@ -102,8 +114,9 @@ begin
       if Path <> '' then Path := Path + ';';
       if not RegWriteExpandStringValue(HKCU, 'Environment', 'Path', Path + Entry) then
         RaiseException('Could not update your user PATH');
-      RegWriteStringValue(HKCU, InstallerKey, 'ManagedPath', Entry);
     end;
+    if not RegWriteStringValue(HKCU, InstallerKey, 'ManagedPath', Entry) then
+      RaiseException('Could not record the installed PATH entry');
   end;
 end;
 
@@ -115,5 +128,17 @@ begin
       RegWriteExpandStringValue(HKCU, 'Environment', 'Path', WithoutPathEntry(Path, Entry));
     RegDeleteValue(HKCU, InstallerKey, 'ManagedPath');
     RegDeleteKeyIfEmpty(HKCU, InstallerKey);
+  end;
+end;
+
+function PrepareToInstall(var NeedsRestart: Boolean): String;
+var Uninstaller: String; ExitCode: Integer;
+begin
+  Result := '';
+  if RegQueryStringValue(HKCU, 'Software\Microsoft\Windows\CurrentVersion\Uninstall\{413FF1A9-1C59-47A8-997E-E3A3DA40D694}_is1', 'UninstallString', Uninstaller) then begin
+    if not Exec(RemoveQuotes(Uninstaller), '/VERYSILENT /SUPPRESSMSGBOXES /NORESTART', '', SW_HIDE, ewWaitUntilTerminated, ExitCode) then
+      Result := 'Could not remove the previous Zed Fork installation'
+    else if ExitCode <> 0 then
+      Result := 'The previous Zed Fork uninstaller failed. Close Zed and retry setup.';
   end;
 end;
