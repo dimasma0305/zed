@@ -30,7 +30,7 @@ jobs:
       source_commit: ${{ steps.source.outputs.source_commit }}
       release_tag: ${{ steps.source.outputs.release_tag }}
       reuse: ${{ steps.source.outputs.reuse }}
-      already_published: ${{ steps.source.outputs.already_published }}
+      skip_publish: ${{ steps.source.outputs.skip_publish }}
     steps:
       - uses: actions/checkout@93cb6efe18208431cddfb8368fd83d5badbf9bfd
       - name: Resolve and verify release source
@@ -47,6 +47,11 @@ jobs:
               if os.environ['GITHUB_EVENT_NAME'] == 'workflow_run':
                   event = json.loads(pathlib.Path(os.environ['GITHUB_EVENT_PATH']).read_text())
                   completed = event['workflow_run']
+                  if completed['head_sha'] != os.environ['GITHUB_SHA']:
+                      print('A newer main commit exists; publish after its checks pass')
+                      with open(os.environ['GITHUB_OUTPUT'], 'a') as output:
+                          output.write('skip_publish=true\n')
+                      raise SystemExit(0)
                   source = dict(run_id=completed['id'], source_commit=completed['head_sha'])
                   refs = json.loads(subprocess.run(['gh', 'api', f"repos/{os.environ['GH_REPO']}/git/matching-refs/tags/pdf-viewer-windows-v"], check=True, capture_output=True, text=True).stdout)
                   versions = [tuple(map(int, match.groups())) for ref in refs if (match := re.fullmatch(r'refs/tags/pdf-viewer-windows-v([0-9]+)\.([0-9]+)\.([0-9]+)', ref['ref']))]
@@ -67,7 +72,7 @@ jobs:
               if existing:
                   print(f"Build already published: {existing['html_url']}")
                   with open(os.environ['GITHUB_OUTPUT'], 'a') as output:
-                      output.write('already_published=true\n')
+                      output.write('skip_publish=true\n')
                   raise SystemExit(0)
           assert re.fullmatch(r'[0-9a-f]{40}', source['source_commit'])
           assert re.fullmatch(r'pdf-viewer-windows-v[0-9]+\.[0-9]+\.[0-9]+', source['release_tag'])
@@ -81,7 +86,7 @@ jobs:
     uses: ./.github/workflows/pdf-viewer.yml
 
   publish:
-    if: ${{ !cancelled() && needs.resolve.result == 'success' && needs.resolve.outputs.already_published != 'true' && (needs.checks.result == 'success' || (needs.resolve.outputs.reuse == 'true' && needs.checks.result == 'skipped')) }}
+    if: ${{ !cancelled() && needs.resolve.result == 'success' && needs.resolve.outputs.skip_publish != 'true' && (needs.checks.result == 'success' || (needs.resolve.outputs.reuse == 'true' && needs.checks.result == 'skipped')) }}
     needs: [resolve, checks]
     runs-on: ubuntu-24.04
     permissions:
