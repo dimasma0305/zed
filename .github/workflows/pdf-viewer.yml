@@ -173,7 +173,7 @@ jobs:
       - name: Test SSH binary ranges, viewer navigation and disconnect cleanup
         run: cargo test --locked -p remote_server --lib test_remote_binary
       - name: Verify standalone account isolation
-        run: cargo test --locked -p client --features settings/standalone test_standalone_rejects_account_login
+        run: cargo test --locked -p client --features settings/standalone test_standalone_
       - name: Verify independent AI providers remain available
         run: cargo test --locked -p language_models --features settings/standalone test_standalone_keeps_independent_providers
       - name: Verify stale settings cannot restore account controls
@@ -196,6 +196,21 @@ jobs:
           RELEASE_CHANNEL: stable
           ZED_UPDATE_EXPLANATION: Download updates for this PDF viewer fork from https://github.com/dimasma0305/zed/releases. Upstream automatic updates are disabled for this build.
         run: cargo --config 'profile.release-fast.opt-level=3' --config 'profile.release-fast.debug=0' --config 'profile.release-fast.debug-assertions=false' build --locked --profile release-fast -p zed -p cli --bin zed --bin cli --features util/debug-embed,remote/bundled-remote-server
+      - name: Verify full editor startup
+        shell: pwsh
+        run: ./script/check-windows-startup.ps1 -Application target/release-fast/zed.exe -OutputDirectory windows-startup-qa
+      - name: Save editor startup diagnostics
+        if: always()
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a
+        with:
+          name: windows-startup-qa
+          path: |
+            windows-startup-qa/Zed.log
+            windows-startup-qa/stdout.txt
+            windows-startup-qa/stderr.txt
+            windows-startup-qa/result.txt
+          if-no-files-found: ignore
+          retention-days: 7
       - name: Check the PDF helper inside the Windows application
         run: python crates/pdf_renderer/tests/check_worker.py target/release-fast/zed.exe pdf-windows-qa
       - uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a

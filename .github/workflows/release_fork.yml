@@ -161,6 +161,18 @@ jobs:
         run: |
           $version = $env:RELEASE_TAG -replace '^pdf-viewer-windows-v', ''
           ./script/check-fork-installer.ps1 -Installer "dist/zed-windows-x64-v$version-setup.exe" -PackageDirectory package
+      - name: Save editor startup diagnostics
+        if: always()
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a
+        with:
+          name: windows-installed-startup-qa
+          path: |
+            windows-startup-qa/Zed.log
+            windows-startup-qa/stdout.txt
+            windows-startup-qa/stderr.txt
+            windows-startup-qa/result.txt
+          if-no-files-found: ignore
+          retention-days: 7
       - name: Publish GitHub release
         env:
           GH_TOKEN: ${{ github.token }}

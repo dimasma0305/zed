@@ -82,6 +82,7 @@ try {
             throw "Installed file differs: $relative"
         }
     }
+    & "$PSScriptRoot/check-windows-startup.ps1" -Application (Join-Path $destination 'zed.exe') -OutputDirectory windows-startup-qa
     $shortcut = Join-Path ([Environment]::GetFolderPath('Programs')) 'Zed/Zed.lnk'
     if (-not (Test-Path -LiteralPath $shortcut)) { throw 'Zed Start menu shortcut was not created' }
     if (-not (Test-Path -LiteralPath 'HKCU:\Software\Classes\*\shell\Zed\command')) {

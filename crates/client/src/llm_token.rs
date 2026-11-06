@@ -99,6 +99,9 @@ impl RefreshLlmTokenListener {
     }
 
     fn refresh(&self, mode: TokenRefreshMode, cx: &mut Context<Self>) {
+        if settings::STANDALONE {
+            return;
+        }
         let client = self.client.clone();
         let llm_api_token = self.llm_api_token.clone();
         let organization_id = self
@@ -134,5 +137,37 @@ impl RefreshLlmTokenListener {
             }
             MessageToClient::NotificationsUpdated | MessageToClient::SettingsUpdated => {}
         }
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use clock::FakeSystemClock;
+    use gpui::TestAppContext;
+    use http_client::FakeHttpClient;
+
+    #[gpui::test]
+    fn test_standalone_token_state_is_available_without_hosted_requests(cx: &mut TestAppContext) {
+        if !settings::STANDALONE {
+            return;
+        }
+        cx.update(|cx| {
+            let settings = settings::SettingsStore::test(cx);
+            cx.set_global(settings);
+            let http = FakeHttpClient::create(|_| async {
+                panic!("standalone token state must not send a hosted request")
+            });
+            let client = Client::new(Arc::new(FakeSystemClock::new()), http, cx);
+            let user_store = cx.new(|cx| UserStore::new(client.clone(), cx));
+            RefreshLlmTokenListener::register(client.clone(), user_store, cx);
+            let _token = global_llm_token(cx);
+            RefreshLlmTokenListener::global(cx).update(cx, |listener, cx| {
+                listener.refresh(TokenRefreshMode::Refresh, cx);
+                listener.refresh(TokenRefreshMode::ClearAndRefresh, cx);
+            });
+            assert!(client.status().borrow().is_signed_out());
+        });
+        cx.run_until_parked();
     }
 }
