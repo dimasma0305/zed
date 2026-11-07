@@ -1,0 +1,146 @@
+<Window xmlns="https://github.com/avaloniaui"
+        xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml"
+        xmlns:models="using:Zyber.Models"
+        xmlns:views="using:Zyber.Views"
+        xmlns:edit="clr-namespace:AvaloniaEdit;assembly=AvaloniaEdit"
+        x:Class="Zyber.MainWindow"
+        Title="Zyber" Width="1280" Height="820" MinWidth="960" MinHeight="500" WindowDecorations="BorderOnly">
+  <Window.Styles>
+    <Style Selector="TreeViewItem">
+      <Setter Property="IsExpanded" Value="{Binding IsExpanded, Mode=TwoWay}" />
+      <Setter Property="FontSize" Value="14" />
+    </Style>
+    <Style Selector="ListBox#Tabs ListBoxItem:selected /template/ ContentPresenter">
+      <Setter Property="Background" Value="{DynamicResource zed.tab.active_background}" />
+    </Style>
+  </Window.Styles>
+  <Grid x:Name="WorkspaceLayout" RowDefinitions="*,24" ColumnDefinitions="300,1,*,1,240" Background="{DynamicResource zed.background}">
+    <Border Grid.Column="0" Background="{DynamicResource zed.panel.background}">
+      <Grid><StackPanel HorizontalAlignment="Center" VerticalAlignment="Center" Spacing="8" Margin="16" IsVisible="{Binding NoProject}">
+          <TextBlock Text="Choose one of the options below" FontSize="12" Classes="muted" HorizontalAlignment="Center" />
+          <TextBlock Text="to use the Threads Sidebar" FontSize="12" Classes="muted" HorizontalAlignment="Center" />
+          <Button Content="Open Project  Ctrl-K Ctrl-O" Click="OpenFolderClicked" Classes="quiet" FontSize="14" HorizontalAlignment="Center" />
+          <TextBlock Text="────────  or  ────────" FontSize="11" Classes="muted" HorizontalAlignment="Center" />
+          <Button Content="Clone Repository" Click="CloneRepositoryClicked" Classes="quiet" FontSize="14" HorizontalAlignment="Center" />
+        </StackPanel>
+        <TextBlock Text="Threads" IsVisible="{Binding HasProject}" Classes="muted" FontSize="13" Margin="16,12" VerticalAlignment="Top" />
+      </Grid>
+    </Border>
+    <GridSplitter Grid.Column="1" ResizeDirection="Columns" MinWidth="1" Width="1" Background="{DynamicResource zed.border.variant}" />
+    <Grid Grid.Column="2" RowDefinitions="32,32,*">
+      <Border Grid.Row="0" Background="{DynamicResource zed.title_bar.background}" PointerPressed="TitlePointerPressed" DoubleTapped="TitleDoubleTapped">
+        <StackPanel Orientation="Horizontal" VerticalAlignment="Center" Spacing="2">
+          <Button Classes="quiet" Padding="8,2" FontSize="12">
+            <Button.Content><views:ZedIcon Kind="menu" /></Button.Content>
+            <Button.Flyout><MenuFlyout>
+              <MenuItem Header="New File" Click="NewFileClicked" />
+              <MenuItem Header="Open File…" Click="OpenFileClicked" />
+              <MenuItem Header="Open Project…" Click="OpenFolderClicked" />
+              <MenuItem Header="Find File…" Click="FindFileClicked" />
+              <MenuItem Header="Search Project…" Click="ProjectSearchClicked" />
+              <MenuItem Header="Command Palette…" Click="CommandPaletteClicked" />
+              <MenuItem Header="Document Outline" Click="OutlineClicked" />
+              <MenuItem Header="Git Changes / History" Click="GitPanelClicked" />
+              <MenuItem Header="Project Diagnostics…" Click="DiagnosticsClicked" />
+              <MenuItem Header="Toggle Terminal" Click="TerminalClicked" />
+            </MenuFlyout></Button.Flyout>
+          </Button>
+          <Button Content="{Binding ProjectHeader}" Click="RecentProjectsClicked" Classes="quiet" FontSize="12" Padding="4,2" />
+        </StackPanel>
+      </Border>
+      <Grid Grid.Row="1" ColumnDefinitions="60,*" Background="{DynamicResource zed.tab_bar.background}">
+        <StackPanel Orientation="Horizontal" VerticalAlignment="Center">
+          <Button Classes="quiet" Padding="7,2" Click="BackClicked" ToolTip.Tip="Go back" ><views:ZedIcon Kind="arrow_left" /></Button>
+          <Button Classes="quiet" Padding="7,2" Click="ForwardClicked" ToolTip.Tip="Go forward" ><views:ZedIcon Kind="arrow_right" /></Button>
+        </StackPanel>
+        <ListBox Grid.Column="1" x:Name="Tabs" FontSize="14" ItemsSource="{Binding Tabs}" SelectedItem="{Binding ActiveTab, Mode=TwoWay}"
+                 Background="{DynamicResource zed.tab_bar.background}" BorderThickness="0" ScrollViewer.HorizontalScrollBarVisibility="Auto" ScrollViewer.VerticalScrollBarVisibility="Disabled">
+          <ListBox.ItemsPanel><ItemsPanelTemplate><StackPanel Orientation="Horizontal" /></ItemsPanelTemplate></ListBox.ItemsPanel>
+          <ListBox.ItemTemplate>
+            <DataTemplate DataType="models:WorkspaceTab">
+              <StackPanel Orientation="Horizontal" Spacing="14">
+                <TextBlock Text="{Binding Caption}" VerticalAlignment="Center" />
+                <Button Click="CloseTabClicked" Classes="quiet" Padding="3,0" MinHeight="20" ToolTip.Tip="Close tab" ><views:ZedIcon Kind="close" /></Button>
+              </StackPanel>
+            </DataTemplate>
+          </ListBox.ItemTemplate>
+        </ListBox>
+
+      </Grid>
+      <Grid Grid.Row="2" x:Name="EditorDockLayout" RowDefinitions="*,0,0">
+        <Grid Grid.Row="0" RowDefinitions="44,*" Background="{DynamicResource zed.editor.background}">
+        <Border Grid.Row="0" Padding="12,0" IsVisible="{Binding HasEditor}">
+          <TextBlock Text="{Binding Breadcrumb}" Classes="muted" FontFamily="avares://Zyber/Assets#Lilex" FontSize="15" VerticalAlignment="Center" TextTrimming="CharacterEllipsis" />
+        </Border>
+        <edit:TextEditor x:Name="Editor" Grid.Row="1" IsVisible="{Binding HasEditor}"
+                         ShowLineNumbers="True" FontFamily="avares://Zyber/Assets#Lilex"
+                         FontSize="15" Background="{DynamicResource zed.editor.background}" Foreground="{DynamicResource zed.editor.foreground}" LineNumbersForeground="{DynamicResource zed.editor.line_number}"
+                         Padding="8,0,16,12" HorizontalScrollBarVisibility="Auto" VerticalScrollBarVisibility="Auto" />
+        <views:ProjectSearchView x:Name="ProjectSearchPanel" Grid.Row="0" Grid.RowSpan="2"
+                                 DataContext="{Binding ActiveSearch}" IsVisible="{Binding DataContext.HasSearch, RelativeSource={RelativeSource AncestorType=Window}}" />
+
+          <views:DiagnosticsView x:Name="DiagnosticsPanel" Grid.Row="0" Grid.RowSpan="2"
+                                 DataContext="{Binding ActiveDiagnostics}" IsVisible="{Binding DataContext.HasDiagnostics, RelativeSource={RelativeSource AncestorType=Window}}" />
+          <Button Grid.Row="0" Content="⌕" Click="FindInFileClicked" Classes="quiet" HorizontalAlignment="Right" Margin="0,0,12,0" ToolTip.Tip="Find in file" IsVisible="{Binding HasEditor}" />
+          <StackPanel Grid.RowSpan="2" HorizontalAlignment="Center" VerticalAlignment="Center" Spacing="12" IsVisible="{Binding ShowWelcome}">
+            <TextBlock Text="Welcome to Zyber" FontSize="24" />
+            <Button Content="New File" Click="NewFileClicked" Classes="quiet" />
+            <Button Content="Open Project" Click="OpenFolderClicked" Classes="quiet" />
+          </StackPanel>
+        </Grid>
+        <GridSplitter Grid.Row="1" x:Name="TerminalSplitter" ResizeDirection="Rows" MinHeight="1" Height="1" Background="{DynamicResource zed.border}" IsVisible="False" />
+        <ContentControl Grid.Row="2" x:Name="TerminalContainer" IsVisible="False" />
+      </Grid>
+    </Grid>
+    <GridSplitter Grid.Column="3" ResizeDirection="Columns" MinWidth="1" Width="1" Background="{DynamicResource zed.border.variant}" />
+    <Border Grid.Column="4" Background="{DynamicResource zed.panel.background}">
+      <Grid RowDefinitions="32,*">
+
+        <Grid Grid.Row="1" IsVisible="{Binding ShowProjectPanel}"><StackPanel HorizontalAlignment="Center" VerticalAlignment="Center" Spacing="8" Margin="16" IsVisible="{Binding NoProject}">
+          <TextBlock Text="Choose one of the options below" FontSize="12" Classes="muted" HorizontalAlignment="Center" />
+          <TextBlock Text="to use the Project Panel" FontSize="12" Classes="muted" HorizontalAlignment="Center" />
+          <Button Content="Open Project  Ctrl-K Ctrl-O" Click="OpenFolderClicked" Classes="quiet" FontSize="14" HorizontalAlignment="Center" />
+          <TextBlock Text="────────  or  ────────" FontSize="11" Classes="muted" HorizontalAlignment="Center" />
+          <Button Content="Clone Repository" Click="CloneRepositoryClicked" Classes="quiet" FontSize="14" HorizontalAlignment="Center" />
+        </StackPanel>
+          <Grid IsVisible="{Binding HasProject}" RowDefinitions="36,*">
+            <Grid ColumnDefinitions="*,Auto" Margin="12,0,6,0">
+              <TextBlock Text="{Binding ProjectName}" FontSize="12" VerticalAlignment="Center" TextTrimming="CharacterEllipsis" />
+              <Button Grid.Column="1" Content="↻" Click="RefreshClicked" Classes="quiet" ToolTip.Tip="Refresh file tree" />
+            </Grid>
+            <TreeView x:Name="Files" Grid.Row="1" ItemsSource="{Binding Files}" SelectionChanged="FileSelected" Background="Transparent">
+              <TreeView.ItemTemplate><TreeDataTemplate DataType="models:FileNode" ItemsSource="{Binding Children}">
+                <StackPanel Orientation="Horizontal" Spacing="8"><views:ZedIcon Kind="{Binding Icon}" /><TextBlock Text="{Binding Name}" /></StackPanel>
+              </TreeDataTemplate></TreeView.ItemTemplate>
+            </TreeView>
+          </Grid>
+        </Grid>
+        <views:OutlinePanel x:Name="OutlineSidebar" Grid.Row="1" IsVisible="{Binding DataContext.ShowOutlinePanel, RelativeSource={RelativeSource AncestorType=Window}}" />
+        <views:GitPanel x:Name="GitSidebar" Grid.Row="1" IsVisible="{Binding DataContext.ShowGitPanel, RelativeSource={RelativeSource AncestorType=Window}}" />
+      </Grid>
+    </Border>
+        <StackPanel Grid.ColumnSpan="5" VerticalAlignment="Top" Height="32" Orientation="Horizontal" HorizontalAlignment="Right" Background="{DynamicResource zed.title_bar.background}">
+          <Button Content="─" Click="MinimizeClicked" Classes="quiet" Width="40" FontSize="12" ToolTip.Tip="Minimize" />
+          <Button Content="□" Click="MaximizeClicked" Classes="quiet" Width="40" FontSize="12" ToolTip.Tip="Maximize or restore" />
+          <Button Click="CloseWindowClicked" Classes="quiet" Width="40" FontSize="16" ToolTip.Tip="Close window" ><views:ZedIcon Kind="close" /></Button>
+        </StackPanel>
+    <Border Grid.Row="1" Grid.ColumnSpan="5" Background="{DynamicResource zed.status_bar.background}" BorderBrush="{DynamicResource zed.border}" BorderThickness="0,1,0,0">
+      <Grid ColumnDefinitions="300,*,Auto">
+        <StackPanel Orientation="Horizontal">
+          <Button Content="◧" Click="ThreadsSidebarClicked" Classes="quiet" Padding="8,0" ToolTip.Tip="Toggle threads sidebar" />
+          <Button Content="◷" Click="RecentProjectsClicked" Classes="quiet" Padding="8,0" ToolTip.Tip="Recent projects" />
+        </StackPanel>
+        <TextBlock Grid.Column="1" Text="{Binding Status}" FontSize="11" Classes="muted" VerticalAlignment="Center" TextTrimming="CharacterEllipsis" />
+        <StackPanel Grid.Column="2" Orientation="Horizontal" Spacing="12" VerticalAlignment="Center">
+          <Button Content="{Binding DiagnosticStatus}" ToolTip.Tip="{Binding CodeStatus}" Click="DiagnosticsClicked" Classes="quiet" FontSize="11" Padding="6,0" />
+          <TextBlock Text="{Binding Caret}" FontSize="11" Classes="muted" VerticalAlignment="Center" />
+          <TextBlock Text="{Binding Language}" FontSize="11" Foreground="{DynamicResource zed.text.accent}" VerticalAlignment="Center" />
+          <Button Click="TerminalClicked" Classes="quiet" Padding="6,0" ToolTip.Tip="Toggle terminal (Ctrl+`)" ><views:ZedIcon Kind="terminal" /></Button>
+          <Button Click="GitPanelClicked" Classes="quiet" Padding="6,0" ToolTip.Tip="Toggle Git panel (Ctrl+Shift+G)" ><views:ZedIcon Kind="git_branch" /></Button>
+          <Button Click="OutlineClicked" Classes="quiet" Padding="6,0" ToolTip.Tip="Document outline (Ctrl+Shift+B)"><views:ZedIcon Kind="list_tree" /></Button>
+          <Button Click="ProjectPanelClicked" Classes="quiet" Padding="6,0" ToolTip.Tip="Toggle project panel" ><views:ZedIcon Kind="file_tree" /></Button>
+        </StackPanel>
+      </Grid>
+    </Border>
+  </Grid>
+</Window>

@@ -1,0 +1,47 @@
+<Project Sdk="Microsoft.NET.Sdk">
+  <PropertyGroup>
+    <OutputType>WinExe</OutputType>
+    <TargetFramework>net10.0</TargetFramework>
+    <RuntimeIdentifiers>win-x64;linux-x64</RuntimeIdentifiers>
+    <PackageLicenseExpression>GPL-3.0-or-later</PackageLicenseExpression>
+    <AssemblyName>Zyber</AssemblyName>
+    <RootNamespace>Zyber</RootNamespace>
+    <Version>0.1.0</Version>
+    <Product>Zyber</Product>
+    <Description>A native C# code editor inspired by Zed.</Description>
+    <AvaloniaUseCompiledBindingsByDefault>false</AvaloniaUseCompiledBindingsByDefault>
+  </PropertyGroup>
+  <ItemGroup>
+    <AvaloniaResource Include="Assets/**" />
+    <EmbeddedResource Include="ThemeDefaults.json" LogicalName="Zyber.ThemeDefaults.json" />
+    <EmbeddedResource Include="../../../assets/themes/one/one.json" LogicalName="Zyber.Themes.One.json" />
+    <EmbeddedResource Include="../../../assets/themes/ayu/ayu.json" LogicalName="Zyber.Themes.Ayu.json" />
+    <EmbeddedResource Include="../../../assets/themes/gruvbox/gruvbox.json" LogicalName="Zyber.Themes.Gruvbox.json" />
+    <EmbeddedResource Include="../../../assets/icons/git_branch.svg" LogicalName="Zyber.Icons.git_branch.svg" />
+    <EmbeddedResource Include="../../../assets/icons/git_commit.svg" LogicalName="Zyber.Icons.git_commit.svg" />
+    <EmbeddedResource Include="../../../assets/icons/folder.svg" LogicalName="Zyber.Icons.folder.svg" />
+    <EmbeddedResource Include="../../../assets/icons/folder_open.svg" LogicalName="Zyber.Icons.folder_open.svg" />
+    <EmbeddedResource Include="../../../assets/icons/terminal.svg" LogicalName="Zyber.Icons.terminal.svg" />
+    <EmbeddedResource Include="../../../assets/icons/file_tree.svg" LogicalName="Zyber.Icons.file_tree.svg" />
+    <EmbeddedResource Include="../../../assets/icons/file_text_outlined.svg" LogicalName="Zyber.Icons.file_text_outlined.svg" />
+    <EmbeddedResource Include="../../../assets/icons/file_markdown.svg" LogicalName="Zyber.Icons.file_markdown.svg" />
+    <EmbeddedResource Include="../../../assets/icons/file_rust.svg" LogicalName="Zyber.Icons.file_rust.svg" />
+    <EmbeddedResource Include="../../../assets/icons/file_toml.svg" LogicalName="Zyber.Icons.file_toml.svg" />
+    <EmbeddedResource Include="../../../assets/icons/json.svg" LogicalName="Zyber.Icons.json.svg" />
+    <EmbeddedResource Include="../../../assets/icons/code.svg" LogicalName="Zyber.Icons.code.svg" />
+    <EmbeddedResource Include="../../../assets/icons/menu.svg" LogicalName="Zyber.Icons.menu.svg" />
+    <EmbeddedResource Include="../../../assets/icons/close.svg" LogicalName="Zyber.Icons.close.svg" />
+    <EmbeddedResource Include="../../../assets/icons/magnifying_glass.svg" LogicalName="Zyber.Icons.magnifying_glass.svg" />
+    <EmbeddedResource Include="../../../assets/icons/arrow_left.svg" LogicalName="Zyber.Icons.arrow_left.svg" />
+    <EmbeddedResource Include="../../../assets/icons/arrow_right.svg" LogicalName="Zyber.Icons.arrow_right.svg" />
+    <EmbeddedResource Include="../../../assets/icons/rotate_cw.svg" LogicalName="Zyber.Icons.rotate_cw.svg" />
+    <EmbeddedResource Include="../../../assets/icons/pin.svg" LogicalName="Zyber.Icons.pin.svg" />
+    <EmbeddedResource Include="../../../assets/icons/unpin.svg" LogicalName="Zyber.Icons.unpin.svg" />
+    <EmbeddedResource Include="../../../assets/icons/list_tree.svg" LogicalName="Zyber.Icons.list_tree.svg" />
+    <PackageReference Include="Avalonia" Version="12.1.5" />
+    <PackageReference Include="Avalonia.Desktop" Version="12.1.5" />
+    <PackageReference Include="Avalonia.Themes.Fluent" Version="12.1.5" />
+    <PackageReference Include="Avalonia.AvaloniaEdit" Version="12.0.0" />
+    <PackageReference Include="Iciclecreek.Avalonia.Terminal" Version="4.1.3" />
+  </ItemGroup>
+</Project>

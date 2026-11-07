@@ -1,0 +1,22 @@
+<UserControl xmlns="https://github.com/avaloniaui" xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml"
+             x:Class="Zyber.Views.TerminalDock">
+  <Grid RowDefinitions="32,*" Background="{DynamicResource zed.terminal.background}">
+    <Grid ColumnDefinitions="*,Auto,Auto" Background="{DynamicResource zed.tab_bar.background}">
+      <ListBox x:Name="Sessions" SelectionChanged="SessionSelected" BorderThickness="0" Background="{DynamicResource zed.tab_bar.background}"
+               ScrollViewer.HorizontalScrollBarVisibility="Auto" ScrollViewer.VerticalScrollBarVisibility="Disabled">
+        <ListBox.ItemsPanel><ItemsPanelTemplate><StackPanel Orientation="Horizontal" /></ItemsPanelTemplate></ListBox.ItemsPanel>
+        <ListBox.ItemTemplate>
+          <DataTemplate>
+            <StackPanel Orientation="Horizontal" Spacing="10">
+              <TextBlock Text="{Binding Title}" FontSize="13" />
+              <Button Content="×" Click="CloseSessionClicked" Padding="2,0" MinHeight="18" Classes="quiet" ToolTip.Tip="Close terminal session" />
+            </StackPanel>
+          </DataTemplate>
+        </ListBox.ItemTemplate>
+      </ListBox>
+      <Button Grid.Column="1" Content="+" Click="NewSessionClicked" Classes="quiet" ToolTip.Tip="New terminal" />
+      <Button Grid.Column="2" Content="⌄" Click="HideClicked" Classes="quiet" ToolTip.Tip="Hide terminal dock" />
+    </Grid>
+    <Grid Grid.Row="1" x:Name="Terminals" />
+  </Grid>
+</UserControl>

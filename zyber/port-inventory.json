@@ -1,0 +1,1064 @@
+{
+  "reference_commit": "736a40890c15bd16f893c6e67ac7d6dcf2dd2993",
+  "note": "Module inventory, not a claim of feature parity. Every module requires feature-level assessment. Account-only functionality is excluded by user requirement.",
+  "modules": [
+    {
+      "source": "crates/acp_thread",
+      "status": "not_assessed"
+    },
+    {
+      "source": "crates/acp_tools",
+      "status": "not_assessed"
+    },
+    {
+      "source": "crates/action_log",
+      "status": "not_assessed"
+    },
+    {
+      "source": "crates/activity_indicator",
+      "status": "not_assessed"
+    },
+    {
+      "source": "crates/agent",
+      "status": "not_assessed"
+    },
+    {
+      "source": "crates/agent_servers",
+      "status": "not_assessed"
+    },
+    {
+      "source": "crates/agent_settings",
+      "status": "not_assessed"
+    },
+    {
+      "source": "crates/agent_skills",
+      "status": "not_assessed"
+    },
+    {
+      "source": "crates/agent_ui",
+      "status": "not_assessed"
+    },
+    {
+      "source": "crates/agent_ui_benchmarks",
+      "status": "not_assessed"
+    },
+    {
+      "source": "crates/ai_onboarding",
+      "status": "not_assessed"
+    },
+    {
+      "source": "crates/anthropic",
+      "status": "not_assessed"
+    },
+    {
+      "source": "crates/askpass",
+      "status": "not_assessed"
+    },
+    {
+      "source": "crates/assets",
+      "status": "not_assessed"
+    },
+    {
+      "source": "crates/audio",
+      "status": "not_assessed"
+    },
+    {
+      "source": "crates/auto_update",
+      "status": "not_assessed"
+    },
+    {
+      "source": "crates/auto_update_helper",
+      "status": "not_assessed"
+    },
+    {
+      "source": "crates/auto_update_ui",
+      "status": "not_assessed"
+    },
+    {
+      "source": "crates/aws_http_client",
+      "status": "not_assessed"
+    },
+    {
+      "source": "crates/bedrock",
+      "status": "not_assessed"
+    },
+    {
+      "source": "crates/bench_metrics",
+      "status": "not_assessed"
+    },
+    {
+      "source": "crates/benchmarks",
+      "status": "not_assessed"
+    },
+    {
+      "source": "crates/breadcrumbs",
+      "status": "not_assessed"
+    },
+    {
+      "source": "crates/buffer_diff",
+      "status": "not_assessed"
+    },
+    {
+      "source": "crates/call",
+      "status": "not_assessed"
+    },
+    {
+      "source": "crates/call_hierarchy",
+      "status": "not_assessed"
+    },
+    {
+      "source": "crates/channel",
+      "status": "not_assessed"
+    },
+    {
+      "source": "crates/cli",
+      "status": "partial"
+    },
+    {
+      "source": "crates/client",
+      "status": "not_assessed"
+    },
+    {
+      "source": "crates/clock",
+      "status": "not_assessed"
+    },
+    {
+      "source": "crates/cloud_api_client",
+      "status": "not_assessed"
+    },
+    {
+      "source": "crates/cloud_api_types",
+      "status": "not_assessed"
+    },
+    {
+      "source": "crates/cloud_llm_client",
+      "status": "not_assessed"
+    },
+    {
+      "source": "crates/codestral",
+      "status": "not_assessed"
+    },
+    {
+      "source": "crates/collab",
+      "status": "not_assessed"
+    },
+    {
+      "source": "crates/collab_ui",
+      "status": "not_assessed"
+    },
+    {
+      "source": "crates/collections",
+      "status": "not_assessed"
+    },
+    {
+      "source": "crates/command_palette",
+      "status": "partial"
+    },
+    {
+      "source": "crates/command_palette_hooks",
+      "status": "not_assessed"
+    },
+    {
+      "source": "crates/component",
+      "status": "not_assessed"
+    },
+    {
+      "source": "crates/component_preview",
+      "status": "not_assessed"
+    },
+    {
+      "source": "crates/context_server",
+      "status": "not_assessed"
+    },
+    {
+      "source": "crates/copilot",
+      "status": "not_assessed"
+    },
+    {
+      "source": "crates/copilot_chat",
+      "status": "not_assessed"
+    },
+    {
+      "source": "crates/crashes",
+      "status": "not_assessed"
+    },
+    {
+      "source": "crates/credentials_provider",
+      "status": "not_assessed"
+    },
+    {
+      "source": "crates/dap",
+      "status": "not_assessed"
+    },
+    {
+      "source": "crates/dap_adapters",
+      "status": "not_assessed"
+    },
+    {
+      "source": "crates/db",
+      "status": "not_assessed"
+    },
+    {
+      "source": "crates/debug_adapter_extension",
+      "status": "not_assessed"
+    },
+    {
+      "source": "crates/debugger_tools",
+      "status": "not_assessed"
+    },
+    {
+      "source": "crates/debugger_ui",
+      "status": "not_assessed"
+    },
+    {
+      "source": "crates/deepseek",
+      "status": "not_assessed"
+    },
+    {
+      "source": "crates/dev_container",
+      "status": "not_assessed"
+    },
+    {
+      "source": "crates/diagnostics",
+      "status": "partial",
+      "note": "Initial stdio language-server features with real Pyright/TypeScript tests; see FEATURE_PARITY.md for unsupported behavior."
+    },
+    {
+      "source": "crates/docs_preprocessor",
+      "status": "not_assessed"
+    },
+    {
+      "source": "crates/edit_prediction",
+      "status": "not_assessed"
+    },
+    {
+      "source": "crates/edit_prediction_cli",
+      "status": "not_assessed"
+    },
+    {
+      "source": "crates/edit_prediction_context",
+      "status": "not_assessed"
+    },
+    {
+      "source": "crates/edit_prediction_metrics",
+      "status": "not_assessed"
+    },
+    {
+      "source": "crates/edit_prediction_types",
+      "status": "not_assessed"
+    },
+    {
+      "source": "crates/edit_prediction_ui",
+      "status": "not_assessed"
+    },
+    {
+      "source": "crates/editor",
+      "status": "partial"
+    },
+    {
+      "source": "crates/editor_benchmarks",
+      "status": "not_assessed"
+    },
+    {
+      "source": "crates/encoding_selector",
+      "status": "not_assessed"
+    },
+    {
+      "source": "crates/env_var",
+      "status": "not_assessed"
+    },
+    {
+      "source": "crates/etw_tracing",
+      "status": "not_assessed"
+    },
+    {
+      "source": "crates/eval_cli",
+      "status": "not_assessed"
+    },
+    {
+      "source": "crates/eval_utils",
+      "status": "not_assessed"
+    },
+    {
+      "source": "crates/explorer_command_injector",
+      "status": "not_assessed"
+    },
+    {
+      "source": "crates/extension",
+      "status": "not_assessed"
+    },
+    {
+      "source": "crates/extension_api",
+      "status": "not_assessed"
+    },
+    {
+      "source": "crates/extension_cli",
+      "status": "not_assessed"
+    },
+    {
+      "source": "crates/extension_host",
+      "status": "not_assessed"
+    },
+    {
+      "source": "crates/extension_suggest",
+      "status": "not_assessed"
+    },
+    {
+      "source": "crates/extensions_ui",
+      "status": "not_assessed"
+    },
+    {
+      "source": "crates/feature_flags",
+      "status": "not_assessed"
+    },
+    {
+      "source": "crates/feature_flags_macros",
+      "status": "not_assessed"
+    },
+    {
+      "source": "crates/feedback",
+      "status": "not_assessed"
+    },
+    {
+      "source": "crates/file_content",
+      "status": "not_assessed"
+    },
+    {
+      "source": "crates/file_finder",
+      "status": "partial",
+      "note": "Initial C# implementation; see FEATURE_PARITY.md for tested behavior and gaps."
+    },
+    {
+      "source": "crates/file_icons",
+      "status": "not_assessed"
+    },
+    {
+      "source": "crates/fs",
+      "status": "partial"
+    },
+    {
+      "source": "crates/fs_benchmarks",
+      "status": "not_assessed"
+    },
+    {
+      "source": "crates/fuzzy",
+      "status": "not_assessed"
+    },
+    {
+      "source": "crates/fuzzy_nucleo",
+      "status": "not_assessed"
+    },
+    {
+      "source": "crates/git",
+      "status": "partial"
+    },
+    {
+      "source": "crates/git_hosting_providers",
+      "status": "not_assessed"
+    },
+    {
+      "source": "crates/git_ui",
+      "status": "partial"
+    },
+    {
+      "source": "crates/git_ui_core",
+      "status": "partial"
+    },
+    {
+      "source": "crates/github_releases",
+      "status": "not_assessed"
+    },
+    {
+      "source": "crates/go_to_line",
+      "status": "not_assessed"
+    },
+    {
+      "source": "crates/google_ai",
+      "status": "not_assessed"
+    },
+    {
+      "source": "crates/gpui",
+      "status": "not_assessed"
+    },
+    {
+      "source": "crates/gpui_apple",
+      "status": "not_assessed"
+    },
+    {
+      "source": "crates/gpui_ios",
+      "status": "not_assessed"
+    },
+    {
+      "source": "crates/gpui_linux",
+      "status": "not_assessed"
+    },
+    {
+      "source": "crates/gpui_macos",
+      "status": "not_assessed"
+    },
+    {
+      "source": "crates/gpui_macros",
+      "status": "not_assessed"
+    },
+    {
+      "source": "crates/gpui_platform",
+      "status": "not_assessed"
+    },
+    {
+      "source": "crates/gpui_shared_string",
+      "status": "not_assessed"
+    },
+    {
+      "source": "crates/gpui_tokio",
+      "status": "not_assessed"
+    },
+    {
+      "source": "crates/gpui_util",
+      "status": "not_assessed"
+    },
+    {
+      "source": "crates/gpui_web",
+      "status": "not_assessed"
+    },
+    {
+      "source": "crates/gpui_wgpu",
+      "status": "not_assessed"
+    },
+    {
+      "source": "crates/gpui_windows",
+      "status": "not_assessed"
+    },
+    {
+      "source": "crates/grammars",
+      "status": "not_assessed"
+    },
+    {
+      "source": "crates/hang_telemetry",
+      "status": "not_assessed"
+    },
+    {
+      "source": "crates/html_to_markdown",
+      "status": "not_assessed"
+    },
+    {
+      "source": "crates/http_client",
+      "status": "not_assessed"
+    },
+    {
+      "source": "crates/http_client_tls",
+      "status": "not_assessed"
+    },
+    {
+      "source": "crates/http_proxy",
+      "status": "not_assessed"
+    },
+    {
+      "source": "crates/icons",
+      "status": "not_assessed"
+    },
+    {
+      "source": "crates/image_viewer",
+      "status": "not_assessed"
+    },
+    {
+      "source": "crates/pdf_renderer",
+      "status": "not_assessed"
+    },
+    {
+      "source": "crates/pdf_viewer",
+      "status": "not_assessed"
+    },
+    {
+      "source": "crates/binary_viewer",
+      "status": "not_assessed"
+    },
+    {
+      "source": "crates/input_latency_ui",
+      "status": "not_assessed"
+    },
+    {
+      "source": "crates/inspector_ui",
+      "status": "not_assessed"
+    },
+    {
+      "source": "crates/install_cli",
+      "status": "not_assessed"
+    },
+    {
+      "source": "crates/journal",
+      "status": "not_assessed"
+    },
+    {
+      "source": "crates/json_schema_store",
+      "status": "not_assessed"
+    },
+    {
+      "source": "crates/keymap_editor",
+      "status": "not_assessed"
+    },
+    {
+      "source": "crates/language",
+      "status": "partial",
+      "note": "Initial stdio language-server features with real Pyright/TypeScript tests; see FEATURE_PARITY.md for unsupported behavior."
+    },
+    {
+      "source": "crates/language_core",
+      "status": "not_assessed"
+    },
+    {
+      "source": "crates/language_detection",
+      "status": "not_assessed"
+    },
+    {
+      "source": "crates/language_extension",
+      "status": "not_assessed"
+    },
+    {
+      "source": "crates/language_model",
+      "status": "not_assessed"
+    },
+    {
+      "source": "crates/language_model_core",
+      "status": "not_assessed"
+    },
+    {
+      "source": "crates/language_models",
+      "status": "not_assessed"
+    },
+    {
+      "source": "crates/language_models_cloud",
+      "status": "not_assessed"
+    },
+    {
+      "source": "crates/language_onboarding",
+      "status": "not_assessed"
+    },
+    {
+      "source": "crates/language_selector",
+      "status": "not_assessed"
+    },
+    {
+      "source": "crates/language_tools",
+      "status": "not_assessed"
+    },
+    {
+      "source": "crates/languages",
+      "status": "partial",
+      "note": "Initial stdio language-server features with real Pyright/TypeScript tests; see FEATURE_PARITY.md for unsupported behavior."
+    },
+    {
+      "source": "crates/line_ending_selector",
+      "status": "not_assessed"
+    },
+    {
+      "source": "crates/livekit_api",
+      "status": "not_assessed"
+    },
+    {
+      "source": "crates/livekit_client",
+      "status": "not_assessed"
+    },
+    {
+      "source": "crates/llama_cpp",
+      "status": "not_assessed"
+    },
+    {
+      "source": "crates/lmstudio",
+      "status": "not_assessed"
+    },
+    {
+      "source": "crates/lsp",
+      "status": "partial",
+      "note": "Initial stdio language-server features with real Pyright/TypeScript tests; see FEATURE_PARITY.md for unsupported behavior."
+    },
+    {
+      "source": "crates/lsp_command_selector",
+      "status": "not_assessed"
+    },
+    {
+      "source": "crates/lsp_locations",
+      "status": "not_assessed"
+    },
+    {
+      "source": "crates/markdown",
+      "status": "not_assessed"
+    },
+    {
+      "source": "crates/markdown_preview",
+      "status": "not_assessed"
+    },
+    {
+      "source": "crates/menu",
+      "status": "not_assessed"
+    },
+    {
+      "source": "crates/mermaid_render",
+      "status": "not_assessed"
+    },
+    {
+      "source": "crates/migrator",
+      "status": "not_assessed"
+    },
+    {
+      "source": "crates/miniprofiler_ui",
+      "status": "not_assessed"
+    },
+    {
+      "source": "crates/mistral",
+      "status": "not_assessed"
+    },
+    {
+      "source": "crates/multi_buffer",
+      "status": "not_assessed"
+    },
+    {
+      "source": "crates/net",
+      "status": "not_assessed"
+    },
+    {
+      "source": "crates/node_runtime",
+      "status": "not_assessed"
+    },
+    {
+      "source": "crates/notifications",
+      "status": "not_assessed"
+    },
+    {
+      "source": "crates/oauth_callback_server",
+      "status": "not_assessed"
+    },
+    {
+      "source": "crates/ollama",
+      "status": "not_assessed"
+    },
+    {
+      "source": "crates/onboarding",
+      "status": "not_assessed"
+    },
+    {
+      "source": "crates/open_ai",
+      "status": "not_assessed"
+    },
+    {
+      "source": "crates/open_path_prompt",
+      "status": "not_assessed"
+    },
+    {
+      "source": "crates/open_router",
+      "status": "not_assessed"
+    },
+    {
+      "source": "crates/openai_subscribed",
+      "status": "not_assessed"
+    },
+    {
+      "source": "crates/opencode",
+      "status": "not_assessed"
+    },
+    {
+      "source": "crates/outline",
+      "status": "partial"
+    },
+    {
+      "source": "crates/outline_panel",
+      "status": "partial"
+    },
+    {
+      "source": "crates/path",
+      "status": "not_assessed"
+    },
+    {
+      "source": "crates/paths",
+      "status": "not_assessed"
+    },
+    {
+      "source": "crates/picker",
+      "status": "not_assessed"
+    },
+    {
+      "source": "crates/picker_preview",
+      "status": "not_assessed"
+    },
+    {
+      "source": "crates/platform_title_bar",
+      "status": "not_assessed"
+    },
+    {
+      "source": "crates/prettier",
+      "status": "not_assessed"
+    },
+    {
+      "source": "crates/project",
+      "status": "not_assessed"
+    },
+    {
+      "source": "crates/project_benchmarks",
+      "status": "not_assessed"
+    },
+    {
+      "source": "crates/project_panel",
+      "status": "partial",
+      "note": "Initial C# implementation; see FEATURE_PARITY.md for tested behavior and gaps."
+    },
+    {
+      "source": "crates/project_symbols",
+      "status": "not_assessed"
+    },
+    {
+      "source": "crates/prompt_store",
+      "status": "not_assessed"
+    },
+    {
+      "source": "crates/proto",
+      "status": "not_assessed"
+    },
+    {
+      "source": "crates/proxy_handshake",
+      "status": "not_assessed"
+    },
+    {
+      "source": "crates/recent_projects",
+      "status": "partial",
+      "note": "Initial C# implementation; see FEATURE_PARITY.md for tested behavior and gaps."
+    },
+    {
+      "source": "crates/refineable",
+      "status": "not_assessed"
+    },
+    {
+      "source": "crates/refineable/derive_refineable",
+      "status": "not_assessed"
+    },
+    {
+      "source": "crates/release_channel",
+      "status": "not_assessed"
+    },
+    {
+      "source": "crates/remote",
+      "status": "not_assessed"
+    },
+    {
+      "source": "crates/remote_connection",
+      "status": "not_assessed"
+    },
+    {
+      "source": "crates/remote_server",
+      "status": "not_assessed"
+    },
+    {
+      "source": "crates/repl",
+      "status": "not_assessed"
+    },
+    {
+      "source": "crates/reqwest_client",
+      "status": "not_assessed"
+    },
+    {
+      "source": "crates/rope",
+      "status": "not_assessed"
+    },
+    {
+      "source": "crates/rpc",
+      "status": "not_assessed"
+    },
+    {
+      "source": "crates/sandbox",
+      "status": "not_assessed"
+    },
+    {
+      "source": "crates/scheduler",
+      "status": "not_assessed"
+    },
+    {
+      "source": "crates/schema_generator",
+      "status": "not_assessed"
+    },
+    {
+      "source": "crates/search",
+      "status": "partial",
+      "note": "Initial C# implementation; see FEATURE_PARITY.md for tested behavior and gaps."
+    },
+    {
+      "source": "crates/session",
+      "status": "not_assessed"
+    },
+    {
+      "source": "crates/settings",
+      "status": "partial"
+    },
+    {
+      "source": "crates/settings_content",
+      "status": "not_assessed"
+    },
+    {
+      "source": "crates/settings_json",
+      "status": "not_assessed"
+    },
+    {
+      "source": "crates/settings_macros",
+      "status": "not_assessed"
+    },
+    {
+      "source": "crates/settings_profile_selector",
+      "status": "not_assessed"
+    },
+    {
+      "source": "crates/settings_ui",
+      "status": "not_assessed"
+    },
+    {
+      "source": "crates/shell_command_parser",
+      "status": "not_assessed"
+    },
+    {
+      "source": "crates/sidebar",
+      "status": "not_assessed"
+    },
+    {
+      "source": "crates/snippet",
+      "status": "not_assessed"
+    },
+    {
+      "source": "crates/snippet_provider",
+      "status": "not_assessed"
+    },
+    {
+      "source": "crates/snippets_ui",
+      "status": "not_assessed"
+    },
+    {
+      "source": "crates/sqlez",
+      "status": "not_assessed"
+    },
+    {
+      "source": "crates/sqlez_macros",
+      "status": "not_assessed"
+    },
+    {
+      "source": "crates/streaming_diff",
+      "status": "not_assessed"
+    },
+    {
+      "source": "crates/sum_tree",
+      "status": "not_assessed"
+    },
+    {
+      "source": "crates/svg_preview",
+      "status": "not_assessed"
+    },
+    {
+      "source": "crates/syntax_theme",
+      "status": "not_assessed"
+    },
+    {
+      "source": "crates/system_specs",
+      "status": "not_assessed"
+    },
+    {
+      "source": "crates/tab_switcher",
+      "status": "not_assessed"
+    },
+    {
+      "source": "crates/tabular_data_preview",
+      "status": "not_assessed"
+    },
+    {
+      "source": "crates/task",
+      "status": "not_assessed"
+    },
+    {
+      "source": "crates/tasks_ui",
+      "status": "not_assessed"
+    },
+    {
+      "source": "crates/telemetry",
+      "status": "not_assessed"
+    },
+    {
+      "source": "crates/telemetry_events",
+      "status": "not_assessed"
+    },
+    {
+      "source": "crates/terminal",
+      "status": "partial",
+      "note": "Initial C# implementation; see FEATURE_PARITY.md for tested behavior and gaps."
+    },
+    {
+      "source": "crates/terminal_view",
+      "status": "partial",
+      "note": "Initial C# implementation; see FEATURE_PARITY.md for tested behavior and gaps."
+    },
+    {
+      "source": "crates/text",
+      "status": "not_assessed"
+    },
+    {
+      "source": "crates/theme",
+      "status": "partial"
+    },
+    {
+      "source": "crates/theme_extension",
+      "status": "partial"
+    },
+    {
+      "source": "crates/theme_importer",
+      "status": "not_assessed"
+    },
+    {
+      "source": "crates/theme_selector",
+      "status": "partial"
+    },
+    {
+      "source": "crates/theme_settings",
+      "status": "partial"
+    },
+    {
+      "source": "crates/time_format",
+      "status": "not_assessed"
+    },
+    {
+      "source": "crates/title_bar",
+      "status": "not_assessed"
+    },
+    {
+      "source": "crates/toolchain_selector",
+      "status": "not_assessed"
+    },
+    {
+      "source": "crates/ui",
+      "status": "not_assessed"
+    },
+    {
+      "source": "crates/ui_input",
+      "status": "not_assessed"
+    },
+    {
+      "source": "crates/ui_macros",
+      "status": "not_assessed"
+    },
+    {
+      "source": "crates/ui_prompt",
+      "status": "not_assessed"
+    },
+    {
+      "source": "crates/util",
+      "status": "not_assessed"
+    },
+    {
+      "source": "crates/util_macros",
+      "status": "not_assessed"
+    },
+    {
+      "source": "crates/vim",
+      "status": "not_assessed"
+    },
+    {
+      "source": "crates/vim_mode_setting",
+      "status": "not_assessed"
+    },
+    {
+      "source": "crates/watch",
+      "status": "not_assessed"
+    },
+    {
+      "source": "crates/web_search",
+      "status": "not_assessed"
+    },
+    {
+      "source": "crates/web_search_providers",
+      "status": "not_assessed"
+    },
+    {
+      "source": "crates/which_key",
+      "status": "not_assessed"
+    },
+    {
+      "source": "crates/windows_resources",
+      "status": "not_assessed"
+    },
+    {
+      "source": "crates/workspace",
+      "status": "partial"
+    },
+    {
+      "source": "crates/worktree",
+      "status": "not_assessed"
+    },
+    {
+      "source": "crates/worktree_benchmarks",
+      "status": "not_assessed"
+    },
+    {
+      "source": "crates/x_ai",
+      "status": "not_assessed"
+    },
+    {
+      "source": "crates/x_ai_subscribed",
+      "status": "not_assessed"
+    },
+    {
+      "source": "crates/zed",
+      "status": "not_assessed"
+    },
+    {
+      "source": "crates/zed_actions",
+      "status": "not_assessed"
+    },
+    {
+      "source": "crates/zed_credentials_provider",
+      "status": "not_assessed"
+    },
+    {
+      "source": "crates/zed_env_vars",
+      "status": "not_assessed"
+    },
+    {
+      "source": "crates/zeta_prompt",
+      "status": "not_assessed"
+    },
+    {
+      "source": "crates/zlog",
+      "status": "not_assessed"
+    },
+    {
+      "source": "crates/zlog_settings",
+      "status": "not_assessed"
+    },
+    {
+      "source": "crates/ztracing",
+      "status": "not_assessed"
+    },
+    {
+      "source": "crates/ztracing_macro",
+      "status": "not_assessed"
+    },
+    {
+      "source": "extensions/glsl",
+      "status": "not_assessed"
+    },
+    {
+      "source": "extensions/html",
+      "status": "not_assessed"
+    },
+    {
+      "source": "extensions/proto",
+      "status": "not_assessed"
+    },
+    {
+      "source": "extensions/test-extension",
+      "status": "not_assessed"
+    },
+    {
+      "source": "tooling/compliance",
+      "status": "not_assessed"
+    },
+    {
+      "source": "tooling/perf",
+      "status": "not_assessed"
+    },
+    {
+      "source": "tooling/xtask",
+      "status": "not_assessed"
+    }
+  ]
+}

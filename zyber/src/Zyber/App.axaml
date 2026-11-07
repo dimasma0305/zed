@@ -1,0 +1,75 @@
+<Application xmlns="https://github.com/avaloniaui"
+             xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml"
+             xmlns:views="using:Zyber.Views"
+             x:Class="Zyber.App">
+  <Application.Styles>
+    <FluentTheme>
+      <FluentTheme.Palettes>
+        <ColorPaletteResources x:Key="Dark" Accent="{DynamicResource zed.accent.color}" />
+        <ColorPaletteResources x:Key="Light" Accent="{DynamicResource zed.accent.color}" />
+      </FluentTheme.Palettes>
+    </FluentTheme>
+    <StyleInclude Source="avares://AvaloniaEdit/Themes/Fluent/AvaloniaEdit.xaml" />
+    <Style Selector="views|ZedIcon"><Setter Property="Foreground" Value="{DynamicResource zed.icon}" /></Style>
+    <Style Selector="Window">
+      <Setter Property="FontFamily" Value="avares://Zyber/Assets#IBM Plex Sans" />
+      <Setter Property="FontSize" Value="16" />
+      <Setter Property="Background" Value="{DynamicResource zed.editor.background}" />
+      <Setter Property="Foreground" Value="{DynamicResource zed.text}" />
+    </Style>
+    <Style Selector="Button">
+      <Setter Property="FontWeight" Value="Normal" />
+      <Setter Property="CornerRadius" Value="4" />
+      <Setter Property="Padding" Value="8,4" />
+      <Setter Property="Background" Value="{DynamicResource zed.element.background}" />
+      <Setter Property="Foreground" Value="{DynamicResource zed.text}" />
+      <Setter Property="BorderBrush" Value="{DynamicResource zed.border.transparent}" />
+    </Style>
+    <Style Selector="Button:pointerover /template/ ContentPresenter#PART_ContentPresenter">
+      <Setter Property="Background" Value="{DynamicResource zed.element.hover}" />
+      <Setter Property="Foreground" Value="{DynamicResource zed.text}" />
+    </Style>
+    <Style Selector="Button:pressed /template/ ContentPresenter#PART_ContentPresenter">
+      <Setter Property="Background" Value="{DynamicResource zed.element.active}" />
+    </Style>
+    <Style Selector="Button.quiet">
+      <Setter Property="Background" Value="{DynamicResource zed.ghost_element.background}" />
+      <Setter Property="BorderThickness" Value="0" />
+    </Style>
+    <Style Selector="Button.accent">
+      <Setter Property="Foreground" Value="{DynamicResource zed.text.accent}" />
+    </Style>
+    <Style Selector="TextBlock.muted">
+      <Setter Property="Foreground" Value="{DynamicResource zed.text.muted}" />
+    </Style>
+    <Style Selector="TreeView">
+      <Setter Property="Foreground" Value="{DynamicResource zed.text}" />
+    </Style>
+    <Style Selector="TreeViewItem:selected /template/ ContentPresenter">
+      <Setter Property="Foreground" Value="{DynamicResource zed.text}" />
+    </Style>
+    <Style Selector="ListBox">
+      <Setter Property="Background" Value="{DynamicResource zed.surface.background}" />
+      <Setter Property="Foreground" Value="{DynamicResource zed.text}" />
+    </Style>
+    <Style Selector="ListBoxItem">
+      <Setter Property="Padding" Value="10,4" />
+    </Style>
+    <Style Selector="ListBoxItem:selected /template/ ContentPresenter">
+      <Setter Property="Background" Value="{DynamicResource zed.element.selected}" />
+      <Setter Property="Foreground" Value="{DynamicResource zed.text}" />
+    </Style>
+    <Style Selector="ToolTip">
+      <Setter Property="Background" Value="{DynamicResource zed.elevated_surface.background}" />
+      <Setter Property="Foreground" Value="{DynamicResource zed.text}" />
+      <Setter Property="BorderBrush" Value="{DynamicResource zed.border}" />
+      <Setter Property="FontFamily" Value="avares://Zyber/Assets#IBM Plex Sans" />
+      <Setter Property="FontSize" Value="14" />
+    </Style>
+    <Style Selector="TextBox">
+      <Setter Property="Background" Value="{DynamicResource zed.editor.background}" />
+      <Setter Property="Foreground" Value="{DynamicResource zed.text}" />
+      <Setter Property="BorderBrush" Value="{DynamicResource zed.border}" />
+    </Style>
+  </Application.Styles>
+</Application>

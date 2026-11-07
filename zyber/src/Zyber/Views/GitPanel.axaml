@@ -1,0 +1,48 @@
+<UserControl xmlns="https://github.com/avaloniaui" xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml" x:Class="Zyber.Views.GitPanel">
+  <UserControl.Styles>
+    <Style Selector="Button.selected"><Setter Property="Background" Value="{DynamicResource zed.tab.active_background}" /></Style>
+  </UserControl.Styles>
+  <Grid RowDefinitions="32,Auto,*" Background="{DynamicResource zed.panel.background}">
+    <Grid ColumnDefinitions="*,*">
+      <Button Content="Changes" Click="ChangesClicked" Classes.selected="{Binding ShowChanges}" CornerRadius="0" Classes="quiet" HorizontalAlignment="Stretch" HorizontalContentAlignment="Center" FontSize="14" />
+      <Button Grid.Column="1" Content="History" Click="HistoryClicked" Classes.selected="{Binding ShowHistory}" CornerRadius="0" Classes="quiet" HorizontalAlignment="Stretch" HorizontalContentAlignment="Center" FontSize="14" />
+    </Grid>
+    <TextBlock Grid.Row="1" Text="{Binding Message}" IsVisible="{Binding HasMessage}" Margin="10,5" FontSize="12" TextWrapping="Wrap" Classes="muted" />
+    <Grid Grid.Row="2" RowDefinitions="32,*,32,170,32" IsVisible="{Binding ShowChanges}">
+      <Grid ColumnDefinitions="*,Auto" IsEnabled="{Binding CanAct}">
+        <Button Content="± View Diff" Click="ViewDiffClicked" Classes="quiet" HorizontalAlignment="Left" FontSize="12" />
+        <Button Grid.Column="1" Content="Stage All" Click="StageAllClicked" Classes="quiet" FontSize="12" />
+      </Grid>
+      <Grid Grid.Row="1">
+        <ListBox x:Name="Changes" IsEnabled="{Binding CanAct}" ItemsSource="{Binding Changes}" Background="Transparent" BorderThickness="0" DoubleTapped="ChangeDoubleTapped" KeyDown="ChangeKeyDown">
+          <ListBox.ItemTemplate><DataTemplate>
+            <Grid ColumnDefinitions="Auto,*,Auto" ColumnSpacing="8">
+              <TextBlock Text="{Binding Status}" FontSize="12" VerticalAlignment="Center" Foreground="{DynamicResource zed.text.accent}" />
+              <StackPanel Grid.Column="1"><TextBlock Text="{Binding Path}" FontSize="13" TextTrimming="CharacterEllipsis" /><TextBlock Text="{Binding Group}" Classes="muted" FontSize="10" /></StackPanel>
+              <Button Grid.Column="2" Content="{Binding Action}" Click="StageClicked" Classes="quiet" FontSize="11" Padding="4,2" />
+            </Grid>
+          </DataTemplate></ListBox.ItemTemplate>
+        </ListBox>
+        <TextBlock Text="No changes to commit" IsVisible="{Binding IsClean}" HorizontalAlignment="Center" VerticalAlignment="Center" Classes="muted" FontSize="13" />
+      </Grid>
+      <Grid Grid.Row="2" ColumnDefinitions="*,Auto,Auto" IsEnabled="{Binding CanAct}">
+        <TextBlock Text="{Binding Branch}" Margin="10,0" FontSize="12" VerticalAlignment="Center" />
+        <Button Grid.Column="1" Content="Fetch" Click="FetchClicked" Classes="quiet" FontSize="12" />
+        <Button Grid.Column="2" Content="{Binding Sync}" Click="PushClicked" Classes="quiet" FontSize="12" />
+      </Grid>
+      <Grid Grid.Row="3" RowDefinitions="*,32" IsEnabled="{Binding CanAct}">
+        <TextBox Text="{Binding CommitMessage, Mode=TwoWay}" PlaceholderText="Enter commit message" AcceptsReturn="True" TextWrapping="Wrap" FontSize="13" Background="Transparent" BorderThickness="0,1,0,0" />
+        <Button Grid.Row="1" Content="{Binding CommitLabel}" Click="CommitClicked" Classes="quiet" HorizontalAlignment="Right" Margin="6,0" FontSize="12" />
+      </Grid>
+      <Border Grid.Row="4" BorderBrush="{DynamicResource zed.border}" BorderThickness="0,1,0,0" Padding="10,5"><TextBlock Text="{Binding LatestCommit}" FontSize="12" TextTrimming="CharacterEllipsis" /></Border>
+    </Grid>
+    <ListBox x:Name="History" Grid.Row="2" ItemsSource="{Binding History}" IsVisible="{Binding ShowHistory}" Background="Transparent" BorderThickness="0" DoubleTapped="HistoryDoubleTapped" KeyDown="HistoryKeyDown">
+      <ListBox.ItemTemplate><DataTemplate>
+        <StackPanel Spacing="5" Margin="2,4">
+          <TextBlock Text="{Binding Subject}" FontSize="13" TextTrimming="CharacterEllipsis" />
+          <TextBlock Text="{Binding Description}" FontSize="11" Classes="muted" TextTrimming="CharacterEllipsis" />
+        </StackPanel>
+      </DataTemplate></ListBox.ItemTemplate>
+    </ListBox>
+  </Grid>
+</UserControl>
