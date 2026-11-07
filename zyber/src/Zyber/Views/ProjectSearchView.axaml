@@ -1,0 +1,29 @@
+<UserControl xmlns="https://github.com/avaloniaui"
+             xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml"
+             xmlns:services="using:Zyber.Services"
+             x:Class="Zyber.Views.ProjectSearchView">
+  <Grid RowDefinitions="Auto,Auto,Auto,*" Background="{DynamicResource zed.editor.background}">
+    <Grid ColumnDefinitions="*,Auto,Auto" Margin="12,8,12,4">
+      <TextBox x:Name="Query" Text="{Binding Query}" PlaceholderText="Search project…" KeyDown="QueryKeyDown" />
+      <Button Grid.Column="1" Content="Search" Click="SearchClicked" Margin="8,0,0,0" />
+      <Button Grid.Column="2" Content="Cancel" Click="CancelClicked" IsEnabled="{Binding IsRunning}" Margin="4,0,0,0" />
+    </Grid>
+    <StackPanel Grid.Row="1" Orientation="Horizontal" Spacing="16" Margin="14,0,12,4">
+      <CheckBox Content="Match case" IsChecked="{Binding CaseSensitive}" />
+      <CheckBox Content="Whole word" IsChecked="{Binding WholeWord}" />
+      <CheckBox Content="Regular expression" IsChecked="{Binding RegularExpression}" />
+    </StackPanel>
+    <TextBlock Grid.Row="2" Text="{Binding Status}" ToolTip.Tip="{Binding Details}" Classes="muted" FontSize="12" Margin="14,2,12,10" TextWrapping="Wrap" />
+    <ListBox Grid.Row="3" x:Name="Results" ItemsSource="{Binding Results}" DoubleTapped="ResultDoubleTapped" KeyDown="ResultKeyDown"
+             Background="{DynamicResource zed.editor.background}">
+      <ListBox.ItemTemplate>
+        <DataTemplate DataType="services:SearchHit">
+          <StackPanel Spacing="4" Margin="0,4">
+            <TextBlock Text="{Binding Location}" Foreground="{DynamicResource zed.text.accent}" FontSize="12" />
+            <TextBlock Text="{Binding Preview}" FontFamily="avares://Zyber/Assets#Lilex" FontSize="14" TextTrimming="CharacterEllipsis" />
+          </StackPanel>
+        </DataTemplate>
+      </ListBox.ItemTemplate>
+    </ListBox>
+  </Grid>
+</UserControl>

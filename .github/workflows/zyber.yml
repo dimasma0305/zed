@@ -1,0 +1,108 @@
+name: Zyber desktop
+
+on:
+  push:
+    branches: [main, feature/zyber-csharp]
+    paths: ["zyber/**", ".github/workflows/zyber.yml"]
+  pull_request:
+    paths: ["zyber/**", ".github/workflows/zyber.yml"]
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: zyber-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  desktop:
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - os: windows-2022
+            runtime: win-x64
+          - os: ubuntu-24.04
+            runtime: linux-x64
+    runs-on: ${{ matrix.os }}
+    timeout-minutes: 20
+    defaults:
+      run:
+        working-directory: zyber
+    env:
+      DOTNET_CLI_TELEMETRY_OPTOUT: "1"
+      DOTNET_NOLOGO: "1"
+    steps:
+      - uses: actions/checkout@93cb6efe18208431cddfb8368fd83d5badbf9bfd
+      - uses: actions/setup-dotnet@26b0ec14cb23fa6904739307f278c14f94c95bf1
+        with:
+          global-json-file: zyber/global.json
+          cache: true
+          cache-dependency-path: zyber/**/packages.lock.json
+      - name: Restore locked dependencies
+        run: dotnet restore Zyber.slnx --locked-mode
+      - uses: actions/setup-node@48b55a011bda9f5d6aeb4c2d9c7362e8dae4041e
+        with:
+          node-version: "24"
+      - name: Install pinned language servers for integration tests
+        run: npm install --prefix artifacts/lsp-test --no-audit --no-fund pyright@1.1.414 typescript-language-server@6.0.3 typescript@5.9.3
+      - name: Build and test the editor
+        env:
+          ZYBER_TEST_PYRIGHT: ${{ github.workspace }}/zyber/artifacts/lsp-test/node_modules/pyright/langserver.index.js
+          ZYBER_TEST_TYPESCRIPT: ${{ github.workspace }}/zyber/artifacts/lsp-test/node_modules/typescript-language-server/lib/cli.mjs
+        run: dotnet test Zyber.slnx -c Release --no-restore --logger "trx;LogFileName=tests.trx" --results-directory artifacts/tests
+      - name: Publish self-contained desktop app
+        run: dotnet publish src/Zyber/Zyber.csproj -c Release -r ${{ matrix.runtime }} --self-contained true --no-restore -o artifacts/${{ matrix.runtime }}
+      - name: Package license notices
+        run: python scripts/package-notices.py artifacts/${{ matrix.runtime }}
+      - name: Launch the Windows executable
+        if: runner.os == 'Windows'
+        shell: pwsh
+        run: ./scripts/check-windows-startup.ps1 -Application artifacts/win-x64/Zyber.exe
+      - name: Build Windows installer
+        if: runner.os == 'Windows'
+        shell: pwsh
+        run: |
+          $compiler = "${env:ProgramFiles(x86)}\Inno Setup 6\ISCC.exe"
+          $package = (Resolve-Path artifacts/win-x64).Path
+          $output = Join-Path (Get-Location) 'artifacts/installer'
+          New-Item -ItemType Directory -Path $output -Force | Out-Null
+          & $compiler "/DPackageDir=$package" "/DOutputDir=$output" scripts/installer.iss
+          if ($LASTEXITCODE -ne 0) { throw 'Installer compilation failed.' }
+      - name: Install and launch Zyber
+        if: runner.os == 'Windows'
+        shell: pwsh
+        run: |
+          $destination = Join-Path $env:RUNNER_TEMP 'Zyber-installed'
+          $installer = (Get-ChildItem artifacts/installer/*-setup.exe).FullName
+          $process = Start-Process $installer -ArgumentList @('/VERYSILENT', '/SUPPRESSMSGBOXES', '/NORESTART', "/DIR=`"$destination`"") -Wait -PassThru
+          if ($process.ExitCode -ne 0) { throw "Installation failed: $($process.ExitCode)" }
+          try {
+            ./scripts/check-windows-startup.ps1 -Application (Join-Path $destination 'Zyber.exe')
+          } finally {
+            $uninstall = Start-Process (Join-Path $destination 'unins000.exe') -ArgumentList '/VERYSILENT', '/NORESTART' -Wait -PassThru
+            if ($uninstall.ExitCode -ne 0) { throw "Uninstall failed: $($uninstall.ExitCode)" }
+          }
+      - name: Upload desktop build
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a
+        with:
+          name: zyber-${{ matrix.runtime }}
+          path: zyber/artifacts/${{ matrix.runtime }}/
+          if-no-files-found: error
+          retention-days: 14
+      - name: Upload Windows installer
+        if: runner.os == 'Windows'
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a
+        with:
+          name: zyber-windows-installer
+          path: zyber/artifacts/installer/*-setup.exe
+          if-no-files-found: error
+          retention-days: 14
+      - name: Upload test results
+        if: always()
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a
+        with:
+          name: zyber-tests-${{ matrix.runtime }}
+          path: zyber/artifacts/tests/
+          if-no-files-found: ignore

@@ -1,0 +1,8 @@
+<Solution>
+  <Folder Name="/src/">
+    <Project Path="src/Zyber/Zyber.csproj" />
+  </Folder>
+  <Folder Name="/tests/">
+    <Project Path="tests/Zyber.Tests/Zyber.Tests.csproj" />
+  </Folder>
+</Solution>
