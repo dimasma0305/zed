@@ -95,6 +95,7 @@ public sealed partial class OutlinePanel : UserControl, IDisposable
         if (document is not null) { document.Document.TextChanged -= DocumentChanged; document.PropertyChanged -= DocumentDetailsChanged; }
         document = window?.State.ActiveDocument;
         if (document is not null && window?.State.Tabs.Contains(document) != true) document = null;
+        PinButton.IsEnabled = document is not null;
         expanded.Clear();
         visibleNodes.Clear();
         snapshot = null;
@@ -107,7 +108,7 @@ public sealed partial class OutlinePanel : UserControl, IDisposable
     }
     private void DocumentDetailsChanged(object? sender, PropertyChangedEventArgs arguments)
     {
-        if (arguments.PropertyName == nameof(EditorTab.FilePath)) QueueRefresh();
+        if (arguments.PropertyName == nameof(EditorTab.FilePath)) { UpdatePin(); QueueRefresh(); }
     }
     private void DocumentChanged(object? sender, EventArgs arguments) => QueueRefresh();
     private void QueueRefresh()
